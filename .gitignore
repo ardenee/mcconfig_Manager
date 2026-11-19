@@ -1,0 +1,13 @@
+# Original SPK archives may embed old credentials. Never commit.
+original-spk/
+# Local runtime secrets and data
+.env
+.env.*
+!.env.example
+*.log
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+.DS_Store
+Thumbs.db
+vendor-local/

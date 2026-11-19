@@ -1,0 +1,9 @@
+#!/bin/sh
+
+cp -rf /var/packages/mcconfig/target/bin/* /var/services/web/mcconfig
+
+chmod -R 775 /var/services/web/mcconfig
+# set other files and folder here too
+
+exit 0
+

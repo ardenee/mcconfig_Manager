@@ -1,0 +1,12 @@
+#!/bin/sh
+
+if [ -z "$SYNOPKG_PKGNAME" ]; then
+	echo "The SYNOPKG_PKGNAME is empty" >/tmp/mcconfig.debug
+fi
+
+mcconfigUIDir="/usr/syno/synoman/webman/3rdparty/$SYNOPKG_PKGNAME"
+rm -rf $mcconfigUIDir
+
+rm -rf /var/services/web/mcconfig
+
+exit 0

@@ -1,0 +1,3 @@
+[app]
+app_name	=	"mcconfig"
+description	=	"Configure your Minecraft server on Synology systems."
