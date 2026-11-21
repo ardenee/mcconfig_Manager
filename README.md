@@ -1,71 +1,84 @@
-# mcconfig
+# mcmanager
 
-mcconfig is a small, self-hosted PHP web interface for managing **Minecraft Java Edition** and **Minecraft Bedrock Dedicated Server** configuration. It works with traditional local installations or containerized servers using **host bind mounts**.
+**mcmanager** is a lightweight Minecraft Java and Bedrock server manager for Synology DSM and other PHP/Linux installations. It retains the original **mcconfig** icon and existing Synology package identifier so installed mcconfig packages can be upgraded in place.
 
-The primary distribution is a generic web application. An optional Synology **DSM 7.2+ SPK** is generated from the exact same application sources. The original mcconfig icon is retained.
+The generic PHP application is the **primary distribution**. The optional DSM 7.2+ SPK bundles the same application together with a PHP CLI management worker. No database or third-party PHP framework is needed.
 
-## Features
+## What it does
 
-- Password-protected, responsive web interface with multiple server profiles.
-- Dynamic editor for all properties in server.properties, preserving unknown keys and comments.
-- Java Edition: operators, whitelist, player/IP bans, including modern UUID JSON lists and older text files.
-- Bedrock Edition: allowlist by gamertag and permissions by Xbox XUID (operator/member/visitor).
-- Bukkit, Spigot and Paper: edit supported configuration files, including modern config/paper-global.yml and config/paper-world-defaults.yml.
-- Discover/select, ZIP-export and import worlds (separate Bedrock worlds paths supported).
-- View recent file-based server logs; manually upload a replacement Java server JAR with a backup.
-- Backups before configuration changes, CSRF protection, restricted file operations and checked world ZIP extraction.
-- No database, PHP frameworks, Docker socket, Java upload applet or external program execution.
+- **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
+- **Native or Docker:** adopt existing installations with host-mounted Minecraft data. For new servers, the installer supports native Java **Vanilla and Paper**, or supported Java and Bedrock images through Docker/Container Manager.
+- **Server lifecycle:** start, stop, restart, status, backups and guarded uninstall for managed servers. Imported native processes are read-only unless started under the worker; imported containers require explicit validation and retain external ownership.
+- **Monitoring:** host architecture, RAM, disk, installed Java versions, Docker availability, native/container process status, CPU and memory metrics where supported, and Java/Bedrock local player-count probes.
+- **Updates:** official Mojang and stable PaperMC version lookup; SHA-verified JAR downloads for native Vanilla/Paper, with backup. Container image refresh and recreation are administrator-initiated and restricted to manager-created containers.
+- **Java management:** detect installed Java and install side-by-side **Eclipse Temurin JRE 17, 21 or 25** on supported Linux hosts; check Minecraft/Java version compatibility. System Java packages are not replaced.
+- **Existing mcconfig features:** edit server.properties preserving comments and other keys, manage Java ops/whitelist/bans (including UUID JSON), Bedrock allowlist and XUID permissions, edit supported Bukkit/Spigot/Paper YAML, import/export worlds, view file logs and upload a JAR.
+- **Safety:** admin login, CSRF, private HMAC-authenticated job queue, restricted action/argument lists, verified software sources, installation-only deletion, file backups, and no public worker HTTP endpoint. Job status reports queued/running/completed/failed stages.
 
-## Runtime
+Minecraft itself is not bundled.
 
-- PHP **8.2+**, sessions, **zip** and **zlib** enabled.
-- A writable private application data directory and filesystem permissions on the Minecraft files.
-- HTTPS and restricted network access are recommended for this administration application.
+## Requirements
 
-Minecraft is **not** included. mcconfig does not launch containers, install Java runtimes, run Minecraft commands or restart server processes. Server operation remains with DSM Container Manager, systemd, Docker Compose or your existing Minecraft package.
+**Web interface:** PHP 8.2 or newer with session, zip and zlib, writable private application storage, and read/write access to the selected Minecraft directories.
 
-## Generic web install
+**Optional local worker:** PHP 8.2+ CLI with proc_open, OS support for Java/native processes, and Docker CLI/daemon access for container control. Docker is not required to manage native servers. A Docker-enabled worker can effectively administer host containers; grant access deliberately and only on a trusted NAS. Shared web hosting without a persistent CLI process still supports the file-management features.
 
-    python packaging/build.py --format web
+**Hardware:** actual Java, CPU architecture, available RAM and disk space are checked before managed installations. Bedrock Linux images require supported x86-64 hardware. A managed Java installation uses the host's existing Java or a compatible managed Temurin runtime; containers provide their own Java.
 
-Extract the generated ZIP into the web host. Configure the document root to **public/**; **src/** and **var/** must not be publicly accessible. Allow the PHP account to write to **var/** or set the MCCONFIG_DATA_DIR environment variable to a private path.
+## Generic web hosting installation
 
-Open the site, create an administrator password, then **Settings > Add server**. The server path must be the host's absolute directory containing server.properties. For Java installs, a JAR filename is optional. For Bedrock, specify the directory containing server.properties and a separate worlds directory if necessary.
+1. Build the primary ZIP: python packaging/build.py --format web
+2. Extract dist/mcmanager-web-0.4.0.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
+4. Open the site and create the administrator password. Use **Settings > Add server** for existing local Minecraft data, or **Server Manager** for discovery/install/lifecycle.
+
+Optional management worker on a Linux machine with PHP CLI:
+
+    MCCONFIG_DATA_DIR=/path/to/private/data \
+    MCMANAGER_INSTANCES_DIR=/path/to/minecraft/instances \
+    php agent/worker.php doctor
+
+    MCCONFIG_DATA_DIR=/path/to/private/data \
+    MCMANAGER_INSTANCES_DIR=/path/to/minecraft/instances \
+    php agent/worker.php serve
+
+Both processes must use identical private data and instances paths, with appropriate owner/ACL access. Keep the worker supervised by your service manager; avoid exposing it over HTTP. The once mode processes queued jobs for manual troubleshooting but **cannot** keep native Minecraft processes alive persistently.
 
 ## Synology DSM 7.2+
 
-Install Web Station and PHP 8.2 from Package Center, then build:
+Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
-    python packaging/build.py --format spk
+    python packaging/build.py --format all
 
-The resulting SPK is installed using **Package Center > Manual Install**. It registers the /mcconfig Web Station portal and a dedicated PHP 8.2 profile using **backend 11**, with **session, zip and zlib** enabled. The application runs under an unprivileged account.
+This generates:
 
-The profile's open_basedir permits common /volume1–/volume6 storage, but DSM ACL permissions still apply. Grant the **mcconfig PHP service user** access to only the Minecraft directories it needs. Configuration is kept under /var/packages/mcconfig/var, separately from deployable web files. The package does not need Init_3rdparty or DSM 5 Apache scripts.
+- dist/mcmanager-web-0.4.0.zip — generic web deployment
+- dist/mcmanager-DSM7-0.4.0.spk — DSM Package Center manual install
 
-## Container examples
+The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip and zlib. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 
-**Java / Paper / Spigot / CraftBukkit:** A container such as [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) commonly mounts:
+By default the private application data lives in /var/packages/mcconfig/var; managed server files live below /var/packages/mcconfig/var/instances. For persistent Minecraft worlds on a volume, set MCMANAGER_INSTANCES_DIR for **both** PHP-FPM and the CLI worker before creating servers. DSM ACL permissions for the package service account are still needed. Container management requires access to DSM Container Manager's Docker service and is **not automatically granted**.
+
+DSM Package Center lifecycle, Web Station registration, Docker access and runtime paths should be verified on the actual NAS before relying on production installation or upgrades.
+
+## Example: existing Docker server
+
+For an itzg/minecraft-server container mounted using:
 
     /volume1/docker/minecraft-java/data:/data
 
-In mcconfig set **Edition: Java**, **Deployment: Container**, **Host path: /volume1/docker/minecraft-java/data**.
+add the **NAS host** path /volume1/docker/minecraft-java/data, not /data, in Settings. Choose Java, Container, the server implementation, and the **existing container name**. Then choose **Adopt** in Server Manager. The agent verifies both the image and /data mount before offering lifecycle controls.
 
-**Bedrock:** [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) usually uses a host-mounted /data directory. If a setup uses separate configuration and world volumes, set both host paths, such as:
+Bedrock containers use the equivalent host path and, where needed, a separate Bedrock worlds path. Docker environment variables may override changes to server.properties; with the itzg Java image, OVERRIDE_SERVER_PROPERTIES=false lets the properties file be managed independently when the chosen image supports this configuration.
 
-    /volume1/docker/minecraft-bedrock/config
-    /volume1/docker/minecraft-bedrock/worlds
+## Important limitations
 
-Set **Edition: Bedrock** and use those as the configuration and worlds paths.
+- **Imported servers are preserved.** The manager does not delete an imported container or its data. Existing native servers already running outside the worker cannot be sent process commands. Adopted servers can be edited and monitored; managed start/stop for native Java only works for processes started by the worker.
+- **Installation support is edition-specific.** Automatic native installation is currently Vanilla/Paper Java. Bedrock and modded variants require supported Docker images or an existing installation; Java runtime installation is supported only on compatible Linux hosts.
+- **Managed update is not automatic.** The administrator approves it. Updates may alter plugin/mod/world compatibility; backups and image/JAR checks help but do not guarantee rollback of worlds. Stop servers before consistent backups and software replacement.
+- **Container permissions are powerful.** Do not expose Docker socket access to the PHP web process or give unrestricted root credentials to an HTTP endpoint. Running the CLI worker with Docker access requires an intentional NAS permissions decision.
+- **Monitoring has scope limits.** CPU and RAM counters depend on host OS/permissions. The player count probe requires the local server protocol and port to respond. Container stdout/stderr is still viewed in DSM Container Manager.
+- **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace, cross-host migrations or full RCON console** is currently implemented.
+- **Uninstallation:** by default, managed server data is retained. Optional permanent deletion requires an exact name match and only applies to folders created/owned by mcmanager.
 
-**Important:** Docker variables may regenerate or override server.properties every time the container starts. For the itzg Java image, consider setting **OVERRIDE_SERVER_PROPERTIES=false** when managing that file directly, and avoid conflicting environment variables. Container stdout logs appear in **DSM Container Manager** unless also saved to a file.
-
-## Limitations
-
-- PHP needs host filesystem access; it cannot browse an unmounted container filesystem or another server over the network.
-- All changes to local Minecraft files can be overwritten by server-generated settings or container environment variables; restart Minecraft as needed.
-- Bedrock uses **Xbox XUIDs** and gamertags, not Java UUIDs. Bedrock has no Java JAR uploader. Server process / console control is intentionally outside mcconfig.
-- World imports are non-overwriting and exports are not consistent live snapshots. Stop the server before world import/export and Java JAR replacement.
-- Some Paper/plugin configuration files are version-dependent; the restricted editor supports known filenames, not arbitrary filesystem browsing.
-- A Java server may require a newer Java runtime and substantial RAM/CPU despite minimal container overhead; check hardware and Minecraft version requirements.
-
-Original DSM 5-era mcconfig source is retained in Git history and an offline development archive.
+Project repository: https://github.com/ardenee/mcconfig

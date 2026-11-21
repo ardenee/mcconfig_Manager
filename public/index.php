@@ -2,6 +2,7 @@
 declare(strict_types=1);
 if (PHP_VERSION_ID < 80200) { http_response_code(500); exit('mcconfig requires PHP 8.2 or newer.'); }
 require dirname(__DIR__) . '/src/App.php';
+require dirname(__DIR__) . '/src/Manager.php';
 ini_set('session.use_strict_mode', '1');
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -24,7 +25,7 @@ $config = app_config();
 $installed = isset($config['password_hash']) && is_string($config['password_hash']);
 $authenticated = $installed && ($_SESSION['authenticated'] ?? false) === true;
 $tab = request_string($_GET, 'tab', 32);
-$tabs = ['overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
+$tabs = ['manager'=>'Server Manager', 'overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
 if (!isset($tabs[$tab])) $tab = 'overview';
 $message = (string)($_SESSION['flash'] ?? '');
 unset($_SESSION['flash']);
@@ -70,12 +71,75 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             session_regenerate_id(true);
             redirect();
         }
+        if ($action === 'manager_diagnostics' || $action === 'manager_discover') {
+            if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
+            $job=manager_enqueue($action === 'manager_diagnostics'?'diagnostics':'discover');
+            redirect('manager','&job='.$job);
+        }
+        if ($action === 'manager_install_java') {
+            if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
+            $major=(int)request_string($_POST,'major',2);
+            if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Choose Java 17, 21 or 25.');
+            $job=manager_enqueue('install_java',['major'=>$major]);
+            redirect('manager','&job='.$job);
+        }
+        if ($action === 'manager_action') {
+            if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
+            $job=manager_form_job($_POST,$config);
+            redirect('manager','&job='.$job);
+        }
+        if ($action === 'manager_import') {
+            $name=server_name(request_string($_POST,'name',80));
+            $root=valid_root(request_string($_POST,'path',2048));
+            $edition=request_string($_POST,'edition',12);
+            $deployment=request_string($_POST,'deployment',16);
+            $software=request_string($_POST,'software',20);
+            $containerName=request_string($_POST,'container_name',80);
+            if (!in_array($edition,['java','bedrock'],true) || !in_array($deployment,['native','container'],true)) {
+                throw new InvalidArgumentException('Invalid discovered server.');
+            }
+            foreach (($config['servers']??[]) as $existing) {
+                if (isset($existing['path']) && realpath((string)$existing['path'])===realpath($root)) {
+                    throw new RuntimeException('This server directory is already registered.');
+                }
+            }
+            $id=bin2hex(random_bytes(6));
+            $config['servers'][$id]=['name'=>$name,'path'=>$root,'edition'=>$edition,
+                'deployment'=>$deployment,'software'=>$software,'jar'=>'server.jar','worlds_path'=>'',
+                'container_name'=>$containerName,'install_state'=>'ready'];
+            save_config($config);
+            $_SESSION['server_id']=$id;
+            $job=manager_enqueue('adopt',['server'=>$config['servers'][$id]],$id);
+            redirect('manager','&job='.$job);
+        }
+        if ($action === 'manager_install') {
+            if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
+            $options=manager_install_input($_POST);
+            foreach (($config['servers']??[]) as $existing) {
+                if (($existing['port']??null)===$options['port'] &&
+                    ($existing['edition']??'java')===$options['edition']) {
+                    throw new RuntimeException('A registered server is already using this edition and port.');
+                }
+            }
+            $id=bin2hex(random_bytes(6));
+            $root=manager_instances_root();
+            $path=rtrim($root,'/\\').DIRECTORY_SEPARATOR.$id;
+            $config['servers'][$id]=$options+['path'=>$path,'jar'=>'server.jar',
+                'worlds_path'=>'','install_state'=>'pending'];
+            save_config($config);
+            $_SESSION['server_id']=$id;
+            $job=manager_enqueue('install',$options+['eula'=>'1'],$id);
+            redirect('manager','&job='.$job);
+        }
         if ($action === 'add_server') {
             $name = server_name(request_string($_POST, 'name', 80));
             $root = valid_root(request_string($_POST, 'path', 2048));
             $jar = request_string($_POST, 'jar', 128);
             $edition = request_string($_POST, 'edition', 20);
             $deployment = request_string($_POST, 'deployment', 20);
+            $software = request_string($_POST, 'software', 20);
+            $containerName = request_string($_POST, 'container_name', 80);
+            if (!preg_match('/^[A-Za-z0-9_.-]{0,80}$/D', $containerName)) throw new InvalidArgumentException('Invalid Docker container name.');
             if (!in_array($edition, ['java', 'bedrock'], true)) throw new InvalidArgumentException('Select Java or Bedrock edition.');
             if (!in_array($deployment, ['native', 'container'], true)) throw new InvalidArgumentException('Select a native or container deployment.');
             if ($edition === 'java' && $jar !== '' && !preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $jar)) throw new InvalidArgumentException('Use a simple .jar filename, not a path.');
@@ -85,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $worldsPath = valid_root($worldsPath !== '' ? $worldsPath : $root . DIRECTORY_SEPARATOR . 'worlds');
             } else $worldsPath = '';
             $id = bin2hex(random_bytes(6));
-            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar, 'edition'=>$edition, 'deployment'=>$deployment, 'worlds_path'=>$worldsPath];
+            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar, 'edition'=>$edition, 'deployment'=>$deployment, 'worlds_path'=>$worldsPath, 'software'=>$software, 'container_name'=>$containerName];
             save_config($config);
             $_SESSION['server_id'] = $id;
             $_SESSION['flash'] = 'Server added.';
@@ -94,10 +158,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'remove_server') {
             $id = request_string($_POST, 'server_id', 64);
             if (!isset($config['servers'][$id])) throw new RuntimeException('Unknown server.');
+            $root=(string)($config['servers'][$id]['path']??'');
+            if (is_file($root.'/.mcmanager.json')) throw new RuntimeException('This server is managed by the worker. Use Server Manager > Uninstall to stop and unregister it safely.');
             unset($config['servers'][$id]);
             save_config($config);
             unset($_SESSION['server_id']);
-            $_SESSION['flash'] = 'Server removed from mcconfig; Minecraft files were not deleted.';
+            $_SESSION['flash'] = 'Server unregistered from mcmanager; Minecraft files were not deleted.';
             redirect('settings');
         }
         if ($action === 'password_change') {
@@ -166,16 +232,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+if ($authenticated && $tab==='manager') {
+    $changed=false;
+    foreach (manager_recent_jobs(80) as $job) {
+        $serverId=(string)($job['server_id']??'');
+        $operation=$job['operation']??'';
+        $state=$job['state']??'';
+        if ($operation==='install' && isset($config['servers'][$serverId]) &&
+            ($config['servers'][$serverId]['install_state']??'')==='pending' &&
+            in_array($state,['succeeded','failed'],true)) {
+            if ($state==='succeeded') {
+                $result=$job['result']??[];
+                $config['servers'][$serverId]['install_state']='ready';
+                $config['servers'][$serverId]['version']=$result['version']??'unknown';
+                $config['servers'][$serverId]['jar']='server.jar';
+            } else $config['servers'][$serverId]['install_state']='failed';
+            $changed=true;
+        }
+        if ($operation==='uninstall' && $state==='succeeded' && !empty($job['result']['removed']) &&
+            isset($config['servers'][$serverId])) {
+            unset($config['servers'][$serverId]);
+            $changed=true;
+        }
+    }
+    if ($changed) save_config($config);
+}
 if ($authenticated) {
     $all = is_array($config['servers'] ?? null) ? $config['servers'] : [];
     if (isset($_GET['server']) && is_string($_GET['server']) && isset($all[$_GET['server']])) $_SESSION['server_id'] = $_GET['server'];
     $selected = (string)($_SESSION['server_id'] ?? array_key_first($all) ?? '');
     if (!isset($all[$selected])) $selected = (string)(array_key_first($all) ?? '');
     if ($selected !== '') {
-        try { $server = server_from($config, $selected); }
+        if (($all[$selected]['install_state'] ?? '') === 'pending') $server = null;
+        else try { $server = server_from($config, $selected); }
         catch (Throwable $e) { $error = $e->getMessage(); $server = null; }
     }
-    if ($server === null && !in_array($tab, ['settings','about'], true)) $tab = 'settings';
+    if ($server === null && !in_array($tab, ['settings','about','manager'], true)) $tab = 'settings';
 }
 if ($authenticated && $server && ($_GET['action'] ?? '') === 'download_world') {
     try {
@@ -202,7 +294,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
-<title><?= h($tabs[$tab]) ?> · mcconfig</title>
+<title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
 <link rel="stylesheet" href="assets/style.css">
 <script src="assets/app.js" defer></script>
@@ -212,7 +304,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <main class="login-shell">
   <div class="login-panel">
     <img src="assets/mcconfig.png" width="76" height="76" alt="mcconfig icon">
-    <h1>mcconfig</h1><p class="muted">Minecraft server configuration</p>
+    <h1>mcmanager</h1><p class="muted">Minecraft server management</p>
     <?php if ($error): ?><div class="alert danger"><?= h($error) ?></div><?php endif; ?>
     <?php if (!$installed): ?>
       <div class="alert warning">First-time setup. Complete this on a trusted network before exposing your web server publicly.</div>
@@ -233,7 +325,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <?php else: ?>
 <div class="layout">
 <aside class="sidebar">
-  <a href="index.php" class="brand"><img src="assets/mcconfig.png" width="42" height="42" alt=""><span>mcconfig<small>Server management</small></span></a>
+  <a href="index.php" class="brand"><img src="assets/mcconfig.png" width="42" height="42" alt=""><span>mcmanager<small>Minecraft servers</small></span></a>
   <div class="sidebar-label">WORKSPACE</div>
   <nav aria-label="Main navigation">
   <?php foreach ($tabs as $key=>$title): ?>
@@ -243,7 +335,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
   <div class="sidebar-bottom"><span>PHP <?= h(PHP_VERSION) ?></span><form method="post"><?php hidden_csrf(); ?><button class="link-button" name="action" value="logout">Sign out</button></form></div>
 </aside>
 <div class="main-area">
-<header class="topbar"><button type="button" class="menu-toggle" data-toggle-nav aria-label="Toggle menu">☰</button><div><span class="crumb">mcconfig / </span><strong><?= h($tabs[$tab]) ?></strong></div>
+<header class="topbar"><button type="button" class="menu-toggle" data-toggle-nav aria-label="Toggle menu">☰</button><div><span class="crumb">mcmanager / </span><strong><?= h($tabs[$tab]) ?></strong></div>
   <?php if ($server): ?><form method="get" class="server-selector"><input type="hidden" name="tab" value="<?= h($tab) ?>"><select name="server" aria-label="Select Minecraft server" data-auto-submit>
     <?php foreach ($all as $id=>$row): ?><option value="<?= h($id) ?>" <?= $id === $selected ? 'selected' : '' ?>><?= h($row['name'] ?? $id) ?></option><?php endforeach; ?>
   </select></form><?php endif; ?>
@@ -252,7 +344,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
   <div class="heading"><div><h1><?= h($tabs[$tab]) ?></h1><p><?= h($server['name'] ?? 'Configure your Minecraft installation') ?><?= $server ? ' · '.h(ucfirst(server_edition($server))).' · '.h(is_container($server) ? 'Container storage' : 'Native storage') : '' ?></p></div></div>
   <?php if ($message): ?><div class="alert success"><?= h($message) ?></div><?php endif; ?>
   <?php if ($error): ?><div class="alert danger"><?= h($error) ?></div><?php endif; ?>
-  <?php if ($tab === 'settings'): ?>
+  <?php if ($tab === 'manager'): ?>
+    <?php require dirname(__DIR__).'/src/ManagerView.php'; ?>
+  <?php elseif ($tab === 'settings'): ?>
     <div class="two-column">
     <section class="panel"><h2>Configured servers</h2><p class="muted">Local filesystem access is required. Nothing is changed in Minecraft until you save a setting.</p>
     <?php if (!$all): ?><p class="empty">No Minecraft installations configured yet.</p><?php endif; ?>
@@ -266,9 +360,11 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
         <label>Edition <select name="edition"><option value="java">Java (Vanilla, CraftBukkit, Spigot, Paper, Fabric, etc.)</option><option value="bedrock">Bedrock Dedicated Server</option></select></label>
         <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><option value="container">Container with host bind-mounted data</option></select></label>
+        <label>Server implementation <select name="software"><option value="vanilla">Vanilla Java</option><option value="paper">Paper Java</option><option value="spigot">Spigot Java</option><option value="bukkit">CraftBukkit Java</option><option value="fabric">Fabric Java</option><option value="forge">Forge Java</option><option value="neoforge">NeoForge Java</option><option value="bedrock">Bedrock</option></select></label>
         <label>Host path containing server.properties <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
         <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
         <label>JAR filename (Java only, optional) <input name="jar" placeholder="server.jar"></label>
+        <label>Existing Docker container name (container adoption only) <input name="container_name" placeholder="minecraft-paper"></label>
         <p class="hint">Enter NAS host paths, not /data or other paths inside the container. Java containers usually mount a host folder to /data. Bedrock may use separate config and worlds mounts. The PHP service account needs appropriate ACLs.</p>
         <button class="primary">Add server</button>
       </form>
@@ -290,12 +386,12 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <div class="status-line"><span>open_basedir</span><code class="settings-path"><?= h(ini_get('open_basedir') ?: 'Not restricted') ?></code></div>
       <div class="status-line"><span>Upload maximum</span><strong><?= h(ini_get('upload_max_filesize')) ?></strong></div>
       <div class="status-line"><span>Post maximum</span><strong><?= h(ini_get('post_max_size')) ?></strong></div>
-      <p class="hint">A web-hosting installation can manage only Minecraft files accessible to that host. No shell execution or remote server controls are used.</p>
+      <p class="hint">Generic web hosting can edit accessible Minecraft files without a worker. Installation, lifecycle and container controls require the separate PHP CLI worker.</p>
     </section></div>
   <?php elseif ($tab === 'about'): ?>
-    <section class="panel prose"><h2>mcconfig</h2><p>Modern PHP interface for managing Minecraft Java Edition configuration files, player permissions, worlds, server logs and local JAR uploads.</p>
-      <p>The original application was released for older Synology DSM systems. This edition supports native or host-bind-mounted container Minecraft Java and Bedrock installations. A DSM 7.2+ package is built from the generic PHP application.</p>
-      <p>Changes are saved to mounted files directly. Java player lists use Java UUIDs; Bedrock allowlists and permission lists use Xbox gamertags/XUIDs. Stop the server before replacing JARs or transferring worlds. Container management and Docker logs remain in DSM Container Manager.</p>
+    <section class="panel prose"><h2>mcmanager</h2><p>Manage Java and Bedrock installations, settings, worlds, players, versions and backups. Start the optional local worker to provision servers and control native or container workloads.</p>
+      <p>The original mcconfig application was released for older Synology DSM systems. mcmanager uses the existing mcconfig package identifier for seamless upgrades. It supports native or host-bind-mounted container Java and Bedrock installations; a DSM 7.2+ package adds a separate PHP CLI management worker.</p>
+      <p>Java player lists use UUIDs; Bedrock uses Xbox gamertags/XUIDs. Existing imported servers retain their original installers and ownership. The optional worker performs only approved lifecycle operations and requires NAS permissions. Docker-only console logs remain in Container Manager; not every Minecraft distribution can be installed natively.</p>
       <p><a href="https://github.com/ardenee/mcconfig" target="_blank" rel="noopener noreferrer">GitHub project</a></p></section>
   <?php elseif ($server): ?>
     <?php
@@ -430,7 +526,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
     <?php endif; ?>
   <?php endif; ?>
 </main>
-<footer class="footer">mcconfig · Modern web edition · Changes to Minecraft files are made only when explicitly saved</footer>
+<footer class="footer">mcmanager · Minecraft Server Manager · Actions require administrator authorization</footer>
 </div></div>
 <?php endif; ?>
 </body></html>

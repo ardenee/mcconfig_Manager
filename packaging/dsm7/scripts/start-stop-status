@@ -1,6 +1,67 @@
 #!/bin/sh
-# Web Station manages the PHP-FPM service; no Minecraft process is controlled here.
-case "${1:-}" in
-  start|stop|status|prestart|prestop) exit 0 ;;
+# Unprivileged mcmanager worker; Web Station owns the PHP-FPM service.
+set -e
+PKG="/var/packages/mcconfig/target"
+DATA="/var/packages/mcconfig/var"
+[ -n "$SYNOPKG_PKGDEST" ] && PKG="$SYNOPKG_PKGDEST"
+[ -n "$SYNOPKG_PKGVAR" ] && DATA="$SYNOPKG_PKGVAR"
+SCRIPT="$PKG/webapp/agent/worker.php"
+PID="$DATA/manager/daemon.pid"
+LOG="$DATA/manager/daemon.log"
+
+choose_php() {
+  for BIN in \
+    /var/packages/PHP8.2/target/usr/local/bin/php \
+    /var/packages/PHP8.2/target/bin/php \
+    /usr/local/bin/php82 \
+    /usr/bin/php82 \
+    /usr/bin/php
+  do
+    if [ -x "$BIN" ] && "$BIN" -r 'exit(PHP_VERSION_ID < 80200 ? 1 : 0);' >/dev/null 2>&1; then
+      printf '%s\n' "$BIN"
+      return 0
+    fi
+  done
+  return 1
+}
+is_running() {
+  [ -f "$PID" ] || return 1
+  PROC="$(cat "$PID" 2>/dev/null || :)"
+  case "$PROC" in *[!0-9]*|'') return 1 ;; esac
+  kill -0 "$PROC" 2>/dev/null
+}
+case "$1" in
+  start)
+    if is_running; then exit 0; fi
+    PHP="$(choose_php)" || { echo "PHP 8.2+ CLI not found. See Web Station/PHP 8.2 package." >&2; exit 1; }
+    [ -f "$SCRIPT" ] || { echo "mcmanager worker script missing." >&2; exit 1; }
+    mkdir -p "$DATA/manager"
+    chmod 0700 "$DATA/manager"
+    rm -f "$DATA/manager/stop-request"
+    nohup "$PHP" "$SCRIPT" serve >> "$LOG" 2>&1 < /dev/null &
+    printf '%s\n' "$!" > "$PID"
+    sleep 2
+    is_running || { echo "mcmanager worker failed to start; check $LOG" >&2; exit 1; }
+    exit 0
+    ;;
+  stop)
+    if is_running; then
+      touch "$DATA/manager/stop-request"
+      I=0
+      while is_running && [ "$I" -lt 45 ]; do
+        sleep 1
+        I=$((I + 1))
+      done
+      if is_running; then
+        echo "Worker still saving active Minecraft worlds; refuse forced shutdown." >&2
+        exit 1
+      fi
+    fi
+    rm -f "$PID"
+    exit 0
+    ;;
+  status) is_running ;;
+  prestart) choose_php >/dev/null ;;
+  prestop) exit 0 ;;
   *) exit 1 ;;
 esac
