@@ -19,7 +19,8 @@ FOLDERS = ("public", "src", "var")
 SCRIPTS = ("preinst", "postinst", "preuninst", "postuninst", "preupgrade", "postupgrade", "start-stop-status")
 EXTENSIONS = {".php", ".js", ".css", ".png", ".htaccess"}
 REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js",
-            "public/assets/mcconfig.png", "src/App.php", "var/.htaccess", "var/index.php"}
+            "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
+            "src/BedrockPlayersView.php", "var/.htaccess", "var/index.php"}
 
 
 def web_files() -> dict[str, bytes]:
@@ -88,9 +89,13 @@ def validate_dsm() -> None:
     service = services[0] if len(services) == 1 else {}
     php = service.get("php", {})
     if (service.get("type") != "nginx_php" or service.get("root") != "mcconfig/public"
-            or php.get("backend") != 10 or php.get("profile_name") != "mcconfig PHP 8.2"
+            or php.get("backend") != 11 or php.get("profile_name") != "mcconfig PHP 8.2"
             or php.get("user") != "mcconfig" or php.get("group") != "http"):
-        raise RuntimeError("Web Station must use the isolated PHP 8.2 profile with public document root.")
+        raise RuntimeError("Web Station must use the isolated PHP 8.2 profile (backend 11) with public document root.")
+    required = {"session", "zip", "zlib"}
+    enabled = php.get("extensions", [])
+    if not isinstance(enabled, list) or not required.issubset(set(enabled)) or len(enabled) != len(set(enabled)):
+        raise RuntimeError("DSM PHP profile missing required session, zip or zlib extensions.")
     dirs = resources["pkg_dir_prepare"]
     if (len(dirs) != 1 or dirs[0]["source"] != "/var/packages/mcconfig/target/webapp"
             or dirs[0]["target"] != "mcconfig"
@@ -105,8 +110,9 @@ def validate_dsm() -> None:
         if png_dimension((PACK / file).read_bytes()) != (size, size):
             raise RuntimeError(f"{file} must be {size}x{size}.")
     for script in SCRIPTS:
-        data = (PACK / "scripts" / script).read_bytes()
-        if not data.startswith(b"#!/bin/sh\n"):
+        # Git on Windows may check out POSIX shell scripts with CRLF; package them as LF.
+        data = (PACK / "scripts" / script).read_bytes().replace(b"\r\n", b"\n")
+        if not data.startswith(b"#!/bin/sh\n"): 
             raise RuntimeError(f"Invalid shell script: {script}")
 
 

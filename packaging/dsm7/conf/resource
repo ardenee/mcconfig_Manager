@@ -15,9 +15,9 @@
         "php": {
           "profile_name": "mcconfig PHP 8.2",
           "profile_desc": "PHP 8.2 profile for mcconfig",
-          "backend": 10,
+          "backend": 11,
           "open_basedir": "/var/services/web_packages/mcconfig:/var/packages/mcconfig/var:/volume1:/volume2:/volume3:/volume4:/volume5:/volume6:/tmp:/var/services/tmp",
-          "extensions": ["zip"],
+          "extensions": ["session", "zip", "zlib"],
           "user": "mcconfig",
           "group": "http"
         },

@@ -7,6 +7,13 @@ ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
 if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ini_set('session.cookie_secure', '1');
 session_name('mcconfig_session');
+// Keep session storage private and writable across DSM Web Station PHP profiles.
+$privateSessions = data_dir() . DIRECTORY_SEPARATOR . 'sessions';
+if ((!is_dir($privateSessions) && !@mkdir($privateSessions, 0700, true)) || !is_writable($privateSessions)) {
+    http_response_code(503);
+    exit('mcconfig cannot access its private session directory. Check PHP-FPM permissions and the Web Station open_basedir setting.');
+}
+session_save_path($privateSessions);
 session_start();
 header('Cache-Control: no-store, private');
 header('X-Content-Type-Options: nosniff');
@@ -67,9 +74,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $name = server_name(request_string($_POST, 'name', 80));
             $root = valid_root(request_string($_POST, 'path', 2048));
             $jar = request_string($_POST, 'jar', 128);
-            if ($jar !== '' && !preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $jar)) throw new InvalidArgumentException('Use a simple .jar filename, not a path.');
+            $edition = request_string($_POST, 'edition', 20);
+            $deployment = request_string($_POST, 'deployment', 20);
+            if (!in_array($edition, ['java', 'bedrock'], true)) throw new InvalidArgumentException('Select Java or Bedrock edition.');
+            if (!in_array($deployment, ['native', 'container'], true)) throw new InvalidArgumentException('Select a native or container deployment.');
+            if ($edition === 'java' && $jar !== '' && !preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $jar)) throw new InvalidArgumentException('Use a simple .jar filename, not a path.');
+            if ($edition === 'bedrock') $jar = '';
+            $worldsPath = request_string($_POST, 'worlds_path', 2048);
+            if ($edition === 'bedrock') {
+                $worldsPath = valid_root($worldsPath !== '' ? $worldsPath : $root . DIRECTORY_SEPARATOR . 'worlds');
+            } else $worldsPath = '';
             $id = bin2hex(random_bytes(6));
-            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar];
+            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar, 'edition'=>$edition, 'deployment'=>$deployment, 'worlds_path'=>$worldsPath];
             save_config($config);
             $_SESSION['server_id'] = $id;
             $_SESSION['flash'] = 'Server added.';
@@ -113,7 +129,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'player_add' || $action === 'player_remove') {
             $type = request_string($_POST, 'type', 32);
-            player_update($server, $type, $action === 'player_add' ? 'add' : 'remove', $_POST);
+            if (is_bedrock($server)) bedrock_update($server, $type, $action === 'player_add' ? 'add' : 'remove', $_POST);
+            else player_update($server, $type, $action === 'player_add' ? 'add' : 'remove', $_POST);
             $_SESSION['flash'] = 'Player list updated. Your Minecraft server may need a reload or restart.';
             redirect('players');
         }
@@ -232,7 +249,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
   </select></form><?php endif; ?>
 </header>
 <main class="content">
-  <div class="heading"><div><h1><?= h($tabs[$tab]) ?></h1><p><?= h($server['name'] ?? 'Configure your Minecraft installation') ?></p></div></div>
+  <div class="heading"><div><h1><?= h($tabs[$tab]) ?></h1><p><?= h($server['name'] ?? 'Configure your Minecraft installation') ?><?= $server ? ' · '.h(ucfirst(server_edition($server))).' · '.h(is_container($server) ? 'Container storage' : 'Native storage') : '' ?></p></div></div>
   <?php if ($message): ?><div class="alert success"><?= h($message) ?></div><?php endif; ?>
   <?php if ($error): ?><div class="alert danger"><?= h($error) ?></div><?php endif; ?>
   <?php if ($tab === 'settings'): ?>
@@ -240,16 +257,19 @@ function stat_card(string $label, string $value, string $info = ''): void {
     <section class="panel"><h2>Configured servers</h2><p class="muted">Local filesystem access is required. Nothing is changed in Minecraft until you save a setting.</p>
     <?php if (!$all): ?><p class="empty">No Minecraft installations configured yet.</p><?php endif; ?>
     <?php foreach ($all as $id=>$row): ?>
-      <div class="server-row"><div><strong><?= h($row['name'] ?? $id) ?></strong><code><?= h($row['path'] ?? '') ?></code><small>JAR: <?= h($row['jar'] ?: 'not configured') ?></small></div>
+      <div class="server-row"><div><strong><?= h($row['name'] ?? $id) ?></strong><code><?= h($row['path'] ?? '') ?></code><small><?= h(ucfirst($row['edition'] ?? 'java')) ?> · <?= h(($row['deployment'] ?? 'native') === 'container' ? 'Container bind mount' : 'Native server') ?><?= !empty($row['jar']) ? ' · JAR: '.h($row['jar']) : '' ?></small></div>
       <form method="post" data-confirm="Remove this server from mcconfig? Minecraft files will be left alone."><?php hidden_csrf(); ?><input type="hidden" name="action" value="remove_server"><input type="hidden" name="server_id" value="<?= h($id) ?>"><button class="subtle danger-text">Remove</button></form></div>
     <?php endforeach; ?>
     </section>
     <section class="panel"><h2>Add a Minecraft server</h2>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="add_server">
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
-        <label>Absolute server directory <input name="path" placeholder="/srv/minecraft or /volume1/minecraft" required></label>
-        <label>JAR filename (optional) <input name="jar" placeholder="server.jar"></label>
-        <p class="hint">The PHP account needs access to server.properties and the chosen player files. Grant only the permissions required.</p>
+        <label>Edition <select name="edition"><option value="java">Java (Vanilla, CraftBukkit, Spigot, Paper, Fabric, etc.)</option><option value="bedrock">Bedrock Dedicated Server</option></select></label>
+        <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><option value="container">Container with host bind-mounted data</option></select></label>
+        <label>Host path containing server.properties <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
+        <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
+        <label>JAR filename (Java only, optional) <input name="jar" placeholder="server.jar"></label>
+        <p class="hint">Enter NAS host paths, not /data or other paths inside the container. Java containers usually mount a host folder to /data. Bedrock may use separate config and worlds mounts. The PHP service account needs appropriate ACLs.</p>
         <button class="primary">Add server</button>
       </form>
     </section>
@@ -264,14 +284,18 @@ function stat_card(string $label, string $value, string $info = ''): void {
     <section class="panel"><h2>Runtime checks</h2>
       <div class="status-line"><span>PHP version</span><strong><?= h(PHP_VERSION) ?></strong></div>
       <div class="status-line"><span>Private configuration directory</span><strong><?= is_writable(data_dir()) ? 'Writable' : 'Check permissions' ?></strong></div>
+      <div class="status-line"><span>PHP session support</span><strong><?= extension_loaded('session') ? 'Enabled' : 'Missing' ?></strong></div>
+      <div class="status-line"><span>PHP ZIP support</span><strong><?= extension_loaded('zip') ? 'Enabled' : 'Missing' ?></strong></div>
+      <div class="status-line"><span>PHP zlib support</span><strong><?= extension_loaded('zlib') ? 'Enabled' : 'Missing' ?></strong></div>
+      <div class="status-line"><span>open_basedir</span><code class="settings-path"><?= h(ini_get('open_basedir') ?: 'Not restricted') ?></code></div>
       <div class="status-line"><span>Upload maximum</span><strong><?= h(ini_get('upload_max_filesize')) ?></strong></div>
       <div class="status-line"><span>Post maximum</span><strong><?= h(ini_get('post_max_size')) ?></strong></div>
       <p class="hint">A web-hosting installation can manage only Minecraft files accessible to that host. No shell execution or remote server controls are used.</p>
     </section></div>
   <?php elseif ($tab === 'about'): ?>
     <section class="panel prose"><h2>mcconfig</h2><p>Modern PHP interface for managing Minecraft Java Edition configuration files, player permissions, worlds, server logs and local JAR uploads.</p>
-      <p>The original application was released for older Synology DSM systems. This edition has been rewritten for generic PHP web hosting, with an optional DSM 7.2+ package built from the same source.</p>
-      <p>Changes are saved to files directly. Stop Minecraft before replacing a JAR; restart it when required to apply server configuration changes. Modern player JSON lists require UUIDs.</p>
+      <p>The original application was released for older Synology DSM systems. This edition supports native or host-bind-mounted container Minecraft Java and Bedrock installations. A DSM 7.2+ package is built from the generic PHP application.</p>
+      <p>Changes are saved to mounted files directly. Java player lists use Java UUIDs; Bedrock allowlists and permission lists use Xbox gamertags/XUIDs. Stop the server before replacing JARs or transferring worlds. Container management and Docker logs remain in DSM Container Manager.</p>
       <p><a href="https://github.com/ardenee/mcconfig" target="_blank" rel="noopener noreferrer">GitHub project</a></p></section>
   <?php elseif ($server): ?>
     <?php
@@ -300,6 +324,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
       </div>
     <?php elseif ($tab === 'properties'): ?>
       <section class="panel"><div class="panel-title"><div><h2>server.properties</h2><p class="muted">All current keys are shown, including options added in newer Minecraft versions.</p></div><input id="property-search" placeholder="Filter properties…" aria-label="Filter properties"></div>
+        <?php if (is_container($server)): ?><div class="alert warning">Container environment variables or startup scripts can override these file settings. For itzg Java images, set OVERRIDE_SERVER_PROPERTIES=false when managing this file directly.</div><?php endif; ?>
         <?php if (!is_file(server_file($server, 'server.properties'))): ?><p class="alert warning">No server.properties found at the configured server path.</p><?php else: ?>
         <form method="post"><?php hidden_csrf(); hidden_server($selected); ?><input type="hidden" name="action" value="properties_save">
           <div class="properties-grid">
@@ -315,6 +340,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
         </form><?php endif; ?>
       </section>
     <?php elseif ($tab === 'players'): ?>
+      <?php if (is_bedrock($server)) { require dirname(__DIR__) . '/src/BedrockPlayersView.php'; } else { ?>
       <div class="two-column">
       <?php foreach (['ops'=>'Operators', 'whitelist'=>'Whitelist', 'banned-players'=>'Banned players', 'banned-ips'=>'Banned IP addresses'] as $type=>$label): ?>
         <section class="panel"><h2><?= h($label) ?></h2>
@@ -340,15 +366,16 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <?php } catch (Throwable $e) { ?><div class="alert danger"><?= h($e->getMessage()) ?></div><?php } ?>
         </section>
       <?php endforeach; ?></div>
+      <?php } ?>
     <?php elseif ($tab === 'files'): ?>
-      <section class="panel"><h2>Additional configuration files</h2><p class="muted">Edit local Bukkit, Spigot and Paper configuration without losing unrelated settings. Only known filenames are permitted; backups are saved before changes.</p>
-        <div class="file-links"><?php foreach (editable_files() as $name=>$label): ?>
+      <section class="panel"><h2>Additional configuration files</h2><p class="muted">Edit supported <?= is_bedrock($server) ? 'Bedrock JSON' : 'Bukkit, Spigot and Paper configuration' ?> files. Only known filenames are permitted; backups are saved before changes.</p>
+        <div class="file-links"><?php foreach (editable_files($server) as $name=>$label): ?>
           <a class="subtle <?= ($_GET['file'] ?? '') === $name ? 'selected' : '' ?>" href="?tab=files&amp;file=<?= h(rawurlencode($name)) ?>"><?= h($label) ?></a>
         <?php endforeach; ?></div>
         <?php
-          $available = array_keys(editable_files());
+          $available = array_keys(editable_files($server));
           $fileKey = $_GET['file'] ?? $available[0];
-          if (!is_string($fileKey) || !isset(editable_files()[$fileKey])) $fileKey = $available[0];
+          if (!is_string($fileKey) || !isset(editable_files($server)[$fileKey])) $fileKey = $available[0];
           try { $body = editable_text($server, $fileKey); $fileError = ''; }
           catch (Throwable $e) { $fileError = $e->getMessage(); $body = ''; }
         ?>
@@ -356,11 +383,11 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <form method="post"><?php hidden_csrf(); hidden_server($selected); ?>
           <input type="hidden" name="action" value="save_text"><input type="hidden" name="file_key" value="<?= h($fileKey) ?>">
           <label><?= h($fileKey) ?><textarea name="content" class="text-editor" spellcheck="false" rows="22"><?= h($body) ?></textarea></label>
-          <div class="actions"><button class="primary">Save configuration</button><span>Review YAML syntax before saving; mcconfig does not parse plugin-specific formats.</span></div>
+          <div class="actions"><button class="primary">Save configuration</button><span>Review <?= is_bedrock($server) ? 'JSON' : 'YAML' ?> syntax before saving; raw files are not validated.</span></div>
         </form><?php endif; ?>
       </section>
     <?php elseif ($tab === 'worlds'): ?>
-      <section class="panel"><h2>World directories</h2><p class="muted">Detected using level.dat within the server root. Downloads use ZIP archives. Stop Minecraft before exporting or importing to avoid inconsistent world data.</p>
+      <section class="panel"><h2>World directories</h2><p class="muted">Detected using level.dat in the <?= is_bedrock($server) ? 'configured Bedrock worlds directory' : 'server root' ?>. Stop Minecraft before importing or exporting worlds.</p>
         <?php if (!$worlds): ?><p class="empty">No worlds found. Check your configured server directory.</p><?php endif; ?>
         <div class="world-grid"><?php foreach ($worlds as $world): ?>
           <div class="world"><strong><?= h($world) ?></strong><span><?= ($props['level-name'] ?? 'world') === $world ? 'Selected world' : 'Available world' ?></span>
@@ -373,7 +400,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <section class="panel spaced"><h2>Import a world ZIP</h2>
         <p class="muted">Imports into a new directory only. Existing worlds are never overwritten. ZIP paths and uncompressed sizes are validated before extraction.</p>
         <form method="post" enctype="multipart/form-data"><?php hidden_csrf(); hidden_server($selected); ?><input type="hidden" name="action" value="world_upload">
-          <div class="form-row"><label>New world folder name <input name="world_name" required pattern="[A-Za-z0-9_-]{1,64}" placeholder="MyWorld"></label><label>World archive <input type="file" name="world_zip" accept=".zip,application/zip" required></label></div>
+          <div class="form-row"><label>New world folder name <input name="world_name" required pattern="[A-Za-z0-9_-]{1,64}" placeholder="MyWorld"></label><label>World archive <input type="file" name="world_zip" accept=".zip,.mcworld,application/zip" required></label></div>
           <label class="check"><input type="checkbox" name="stopped" required> The Minecraft server is stopped.</label>
           <button class="primary">Import world</button><p class="hint">ZIP upload maximum: 512 MiB. Maximum uncompressed world: 2 GiB. Requires the PHP zip extension.</p>
         </form>
@@ -381,6 +408,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
     <?php elseif ($tab === 'logs'): ?>
       <section class="panel"><div class="panel-title"><div><h2><?= h($logname ?: 'Server log') ?></h2><p class="muted">Latest 350 lines, with a 256 KiB read limit.</p></div><a href="?tab=logs" class="subtle">Refresh</a></div><pre class="log-full"><?= h($log) ?></pre></section>
     <?php elseif ($tab === 'jar'): ?>
+      <?php if (is_bedrock($server)): ?>
+      <section class="panel"><h2>Bedrock server software</h2><p>Bedrock does not use Java JAR files. Update the Bedrock server through your container image or native installation, after backing up your worlds and configuration.</p></section>
+      <?php else: ?>
       <section class="panel"><h2>Local server JAR</h2>
       <?php $jarName = (string)($server['jar'] ?? ''); $jarPath = $jarName !== '' ? server_file($server, $jarName) : ''; ?>
       <div class="status-line"><span>Configured JAR</span><strong><?= h($jarName ?: 'Not configured') ?></strong></div>
@@ -396,6 +426,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <p class="hint">A timestamped backup of the old JAR is retained. Upload size is limited by your PHP profile and mcconfig's 512 MiB cap.</p>
       <?php endif; ?>
       </section>
+      <?php endif; ?>
     <?php endif; ?>
   <?php endif; ?>
 </main>
