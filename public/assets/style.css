@@ -59,3 +59,47 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-plugin-dropzone input{max-width:100%;font-size:12px}
 .mc-plugin-dropzone.is-dragover{background:#e5f0ff;border-color:#3377e5}
 @media(max-width:600px){.mc-server-card{padding:13px}.mc-server-heading{display:flex;flex-wrap:wrap}.mc-primary-actions{align-items:stretch}.mc-server-heading code{word-break:break-all}}
+
+/* Compact two-column, horizontal-label server.properties editor. */
+.mc-properties-panel{padding:17px 20px}
+.mc-properties-panel .panel-title{align-items:center;margin-bottom:8px;gap:12px}
+.mc-properties-panel .panel-title h2{margin-bottom:2px}
+.mc-properties-panel .panel-title p{margin:0;font-size:12px}
+.mc-properties-panel #property-search{width:225px;padding:7px 9px;font-size:12px}
+.mc-properties-info{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:9px 0 4px}
+.mc-properties-info .status-line{display:flex;align-items:center;gap:8px;justify-content:flex-start;border:1px solid #e9edf3;background:#f8fafc;border-radius:7px;padding:6px 9px;font-size:11px;min-width:0}
+.mc-properties-info .status-line span{flex:0 0 auto}
+.mc-properties-info .status-line strong{text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.mc-properties-source{margin:2px 0 8px}
+.mc-properties-count{font-size:11px;color:#6f7e93;margin:9px 0 3px}
+.mc-properties-panel .properties-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;row-gap:0;margin:5px 0 10px}
+.mc-properties-panel .property{display:grid;grid-template-columns:minmax(120px,43%) minmax(0,1fr);align-items:center;gap:8px;border-bottom:1px solid #eef1f5;margin:0;padding:4px 5px;min-height:38px;font-size:12px}
+.mc-properties-panel .property:nth-child(4n+1),.mc-properties-panel .property:nth-child(4n+2){background:#fbfcfe}
+.mc-properties-panel .property span{font-size:11px;font-weight:650;line-height:1.25;color:#53647b;margin:0;overflow-wrap:anywhere}
+.mc-properties-panel .property input,.mc-properties-panel .property select{height:30px;min-height:30px;width:100%;padding:4px 8px;margin:0;border-radius:6px;font-size:12px}
+.mc-properties-panel .add-property{padding:9px 0 0;margin-top:6px}
+.mc-properties-panel .add-property h3{margin:0 0 7px;font-size:12px}
+.mc-properties-panel .add-property .form-row{gap:8px}
+.mc-properties-panel .add-property input{padding:6px 8px;font-size:12px}
+.mc-properties-panel .actions{padding:10px 0 0;gap:12px}
+.mc-properties-panel .actions button{padding:8px 13px}
+@media(max-width:1150px){.mc-properties-panel .properties-grid{grid-template-columns:1fr}.mc-properties-panel .property:nth-child(4n+1),.mc-properties-panel .property:nth-child(4n+2){background:transparent}.mc-properties-panel .property:nth-child(even){background:#fbfcfe}}
+@media(max-width:750px){.mc-properties-info{grid-template-columns:1fr}.mc-properties-panel .property{grid-template-columns:minmax(110px,42%) minmax(0,1fr)}.mc-properties-panel .panel-title{align-items:flex-start}.mc-properties-panel #property-search{width:100%}}
+@media(max-width:420px){.mc-properties-panel{padding:12px}.mc-properties-panel .property{grid-template-columns:1fr;gap:3px;padding:5px 2px}.mc-properties-panel .property input,.mc-properties-panel .property select{width:100%}}
+
+/* Filtering must override the compact inline-grid property rows. */
+.mc-properties-panel .property[hidden]{display:none!important}
+.mc-log-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mc-log-actions .inline-form{margin:0}
+.mc-plugin-package{border:1px solid #dfe6f0;border-radius:9px;padding:10px 13px;margin:9px 0;background:#fbfcff}
+.mc-plugin-package-summary{display:flex;gap:12px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+.mc-plugin-package-summary strong,.mc-plugin-package-summary small{display:block}
+.mc-plugin-package-summary small{font-size:11px;color:#71819a;margin-top:3px}
+.mc-plugin-package details{margin-top:8px}
+.mc-plugin-package summary{font-size:12px;font-weight:600;cursor:pointer}
+.mc-plugin-file-list{font-size:11px;line-height:1.4;max-height:200px;overflow:auto;margin:6px 0;padding-left:20px;overflow-wrap:anywhere}
+.mc-plugin-package .hint{margin:8px 0}
+.mc-docker-warning>p{margin:7px 0}
+.mc-docker-warning details{margin:10px 0}
+.mc-docker-warning summary{cursor:pointer;font-weight:700}
+.mc-docker-warning code{overflow-wrap:anywhere}

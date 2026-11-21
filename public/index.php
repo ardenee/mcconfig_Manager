@@ -6,6 +6,8 @@ require dirname(__DIR__) . '/src/Manager.php';
 require dirname(__DIR__) . '/src/Console.php';
 require dirname(__DIR__) . '/src/Uploads.php';
 require dirname(__DIR__) . '/src/Plugins.php';
+require dirname(__DIR__) . '/src/PluginPackages.php';
+require dirname(__DIR__) . '/src/DockerAccess.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
 require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
@@ -164,18 +166,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $params=[];
             if ($action==='plugin_upload') {
                 $upload=manager_upload_file($_FILES['plugin_jar']??[], 'plugin');
-                $params=['source'=>'upload','filename'=>plugin_jar_name($upload['filename']),
+                $params=['source'=>'upload','filename'=>plugin_upload_name($upload['filename']),
                     'upload_id'=>$upload['upload_id'],'sha256'=>$upload['sha256']];
             } elseif ($action==='plugin_url') {
                 $params=['source'=>'url',
-                    'filename'=>plugin_jar_name(request_string($_POST,'filename',116)),
+                    'filename'=>plugin_upload_name(request_string($_POST,'filename',116)),
                     'url'=>request_string($_POST,'url',1200),
                     'sha256'=>strtolower(request_string($_POST,'sha256',64))];
                 if (!preg_match('/^[a-f0-9]{64}$/D',$params['sha256'])) {
                     throw new InvalidArgumentException('A complete SHA-256 checksum is required for plugin URL downloads.');
                 }
             } else {
-                $params=['filename'=>plugin_jar_name(request_string($_POST,'filename',116))];
+                $packageId=request_string($_POST,'package_id',24);
+                if ($packageId!=='') {
+                    $params=['package_id'=>plugin_package_id($packageId),
+                        'remove_modified'=>!empty($_POST['remove_modified'])];
+                } else {
+                    $params=['filename'=>plugin_jar_name(request_string($_POST,'filename',116))];
+                }
             }
             $job=manager_enqueue($action==='plugin_remove'?'remove_plugin':'install_plugin',$params,$serverId);
             $_SESSION['server_id']=$serverId;
@@ -206,6 +214,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             save_config($config);
             $_SESSION['flash']='Failed server registration removed. Existing partial server files and containers have not been deleted.';
             redirect('manager');
+        }
+        if ($action === 'server_logs_clear') {
+            if (!manager_online()) throw new RuntimeException('The management service is offline.');
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            if (!isset($config['servers'][$serverId]) ||
+                ($config['servers'][$serverId]['install_state']??'ready')!=='ready') {
+                throw new RuntimeException('Select a registered, ready Minecraft server to clear logs.');
+            }
+            $job=manager_enqueue('clear_logs',[],$serverId);
+            $_SESSION['server_id']=$serverId;
+            redirect('manager','&job='.$job);
         }
         if ($action === 'manager_cancel_job') {
             $job=request_string($_POST,'job_id',24);
@@ -256,6 +275,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!in_array($edition,['java','bedrock'],true) || !in_array($deployment,['native','container'],true)) {
                 throw new InvalidArgumentException('Invalid discovered server.');
             }
+            if ($deployment==='container' && !manager_docker_capability()['available']) {
+                throw new RuntimeException('Cannot adopt a container without Docker daemon access. Repair the mcmanager service account permissions first.');
+            }
             foreach (($config['servers']??[]) as $existing) {
                 if (isset($existing['path']) && realpath((string)$existing['path'])===realpath($root)) {
                     throw new RuntimeException('This server directory is already registered.');
@@ -273,6 +295,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'manager_install') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $options=manager_install_input($_POST);
+            if ($options['deployment']==='container' && !manager_docker_capability()['available']) {
+                throw new RuntimeException('Container installation is unavailable: the mcmanager worker has no Docker daemon access. Check Docker permissions in Server Manager diagnostics before using container deployment.');
+            }
             foreach (($config['servers']??[]) as $existing) {
                 if (($existing['install_state']??'ready')!=='failed' &&
                     ($existing['port']??null)===$options['port'] &&
@@ -301,6 +326,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!preg_match('/^[A-Za-z0-9_.-]{0,80}$/D', $containerName)) throw new InvalidArgumentException('Invalid Docker container name.');
             if (!in_array($edition, ['java', 'bedrock'], true)) throw new InvalidArgumentException('Select Java or Bedrock edition.');
             if (!in_array($deployment, ['native', 'container'], true)) throw new InvalidArgumentException('Select a native or container deployment.');
+            if ($deployment==='container' && !manager_docker_capability()['available']) {
+                throw new RuntimeException('Container management is disabled until the mcmanager worker can access Docker. A manually created container also needs this permission for management.');
+            }
             if ($edition === 'java' && $jar !== '' && !preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $jar)) throw new InvalidArgumentException('Use a simple .jar filename, not a path.');
             if ($edition === 'bedrock') $jar = '';
             $worldsPath = request_string($_POST, 'worlds_path', 2048);
@@ -564,8 +592,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.4">
-<script src="assets/app.js?v=0.5.4" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.5">
+<script src="assets/app.js?v=0.5.5" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
@@ -623,12 +651,14 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <form method="post" data-confirm="Remove this server from mcconfig? Minecraft files will be left alone."><?php hidden_csrf(); ?><input type="hidden" name="action" value="remove_server"><input type="hidden" name="server_id" value="<?= h($id) ?>"><button class="subtle danger-text">Remove</button></form></div>
     <?php endforeach; ?>
     </section>
+    <?php $settingsDocker=manager_docker_capability(); ?>
     <section class="panel"><h2>Register an existing Minecraft server</h2>
       <p class="hint">This form only registers an existing folder. It does not download Minecraft, create a JAR or generate server.properties. For a new installation, use <a href="?tab=manager">Server Manager → Install a new Minecraft server</a>.</p>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="add_server">
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
         <label>Edition <select name="edition"><option value="java">Java (Vanilla, CraftBukkit, Spigot, Paper, Fabric, etc.)</option><option value="bedrock">Bedrock Dedicated Server</option></select></label>
-        <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><option value="container">Container with host bind-mounted data</option></select></label>
+        <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><?php if (!empty($settingsDocker['available'])): ?><option value="container">Container with host bind-mounted data</option><?php endif; ?></select></label>
+        <?php if (empty($settingsDocker['available'])): ?><p class="hint">Container registration is disabled: <?= h($settingsDocker['message']) ?>. Native Java server registration remains available.</p><?php endif; ?>
         <label>Server implementation <select name="software"><option value="vanilla">Vanilla Java</option><option value="paper">Paper Java</option><option value="spigot">Spigot Java</option><option value="bukkit">CraftBukkit Java</option><option value="fabric">Fabric Java</option><option value="forge">Forge Java</option><option value="neoforge">NeoForge Java</option><option value="bedrock">Bedrock</option></select></label>
         <label>Existing server directory on NAS (must exist) <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
         <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
@@ -692,14 +722,15 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <section class="panel wide"><div class="panel-title"><h2>Recent log lines</h2><a href="?tab=logs">View logs</a></div><pre class="log-preview"><?= h(implode("\n", array_slice(explode("\n", $log),-18))) ?></pre></section>
       </div>
     <?php elseif ($tab === 'properties'): ?>
-      <section class="panel"><div class="panel-title"><div><h2>server.properties</h2><p class="muted">Settings for this specific server; additional keys appear after Minecraft generates them on first startup.</p></div><input id="property-search" placeholder="Filter properties…" aria-label="Filter properties"></div>
+      <section class="panel mc-properties-panel"><div class="panel-title"><div><h2>Server properties</h2><p class="muted">Compact editor. Changes are saved to server.properties for the selected server.</p></div><input id="property-search" placeholder="Filter properties…" aria-label="Filter properties"></div>
         <?php $versionInfo=is_bedrock($server)?['version'=>(string)($server['version']??''),'source'=>'registered Bedrock version']:jar_detect_version($server); ?>
+        <div class="mc-properties-info">
         <div class="status-line"><span>Server</span><strong><?= h($server['name']??$selected) ?></strong></div>
         <div class="status-line"><span>Minecraft version</span><strong><?= h($versionInfo['version']?:'Not yet detected') ?></strong></div>
         <?php if (!is_bedrock($server) && $versionInfo['version']!==''): ?>
           <div class="status-line"><span>Expected Java runtime</span><strong>Java <?= jar_java_required($versionInfo['version']) ?: 'unknown' ?></strong></div>
         <?php endif; ?>
-        <p class="hint">Version source: <?= h($versionInfo['source']??'Not available') ?></p>
+        </div><p class="hint mc-properties-source">Version source: <?= h($versionInfo['source']??'Not available') ?></p>
         <?php if (is_container($server)): ?><div class="alert warning">Container environment variables or startup scripts can override these file settings. The container may generate server.properties only after its first successful start; inspect its /data bind mount.</div><?php endif; ?>
         <?php if (!is_file(server_file($server, 'server.properties'))): ?>
           <div class="alert warning"><strong>No server.properties has been created for this server.</strong>
@@ -728,9 +759,10 @@ function stat_card(string $label, string $value, string $info = ''): void {
           <?php endif; ?>
         <?php else: ?>
         <form method="post"><?php hidden_csrf(); hidden_server($selected); ?><input type="hidden" name="action" value="properties_save">
+          <p class="mc-properties-count"><span data-property-count><?= count($props) ?></span> settings · Use the filter to find a key</p>
           <div class="properties-grid">
           <?php foreach ($props as $key=>$value): ?>
-            <label class="property" data-property="<?= h(strtolower($key)) ?>"><span><?= h($key) ?></span>
+            <label class="property" data-property="<?= h(strtolower($key)) ?>"><span title="<?= h($key) ?>"><?= h($key) ?></span>
             <?php if (in_array(strtolower($value), ['true','false'], true)): ?>
               <select name="props[<?= h($key) ?>]"><option value="true" <?= strtolower($value) === 'true' ? 'selected' : '' ?>>true</option><option value="false" <?= strtolower($value) === 'false' ? 'selected' : '' ?>>false</option></select>
             <?php else: ?><input name="props[<?= h($key) ?>]" value="<?= h($value) ?>" maxlength="4096" <?= str_contains(strtolower($key), 'password') ? 'autocomplete="off"' : '' ?>><?php endif; ?>
@@ -807,7 +839,21 @@ function stat_card(string $label, string $value, string $info = ''): void {
         </form>
       </section>
     <?php elseif ($tab === 'logs'): ?>
-      <section class="panel"><div class="panel-title"><div><h2><?= h($logname ?: 'Server log') ?></h2><p class="muted">Latest 350 lines, with a 256 KiB read limit.</p></div><a href="?tab=logs" class="subtle">Refresh</a></div><pre class="log-full"><?= h($log) ?></pre></section>
+      <section class="panel"><div class="panel-title"><div><h2><?= h($logname ?: 'Server log') ?></h2><p class="muted">Latest 350 lines, with a 256 KiB read limit. To clear logs, stop the Minecraft server first.</p></div>
+        <?php $logServerStatus=manager_running_state($selected);
+          $canClearLog=manager_online() &&
+            in_array(($logServerStatus['state']??'unknown'),['stopped','exited','created'],true) &&
+            abs(time()-(int)($logServerStatus['checked']??0))<=45; ?>
+        <div class="mc-log-actions">
+          <a href="?tab=logs&amp;server=<?= h($selected) ?>" class="subtle">Refresh</a>
+          <form method="post" class="inline-form" data-confirm="Move this stopped Minecraft server's log files to private recovery storage? Existing worlds, plugin files and settings will not be changed.">
+            <?php hidden_csrf();hidden_server($selected); ?>
+            <input type="hidden" name="action" value="server_logs_clear">
+            <button type="submit" class="subtle danger-text" <?= !$canClearLog?'disabled':'' ?>>Clear server logs</button>
+            <?php if (!$canClearLog): ?><small class="hint">Stop the server and wait for a current status check to enable clearing.</small><?php endif; ?>
+          </form>
+        </div>
+      </div><pre class="log-full"><?= h($log) ?></pre></section>
     <?php elseif ($tab === 'jar'): ?>
       <?php require dirname(__DIR__).'/src/ServerJarView.php'; ?>
     <?php endif; ?>

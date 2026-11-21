@@ -7,9 +7,11 @@ require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
 require dirname(__DIR__).'/src/Uploads.php';
 require dirname(__DIR__).'/src/Plugins.php';
+require dirname(__DIR__).'/src/PluginPackages.php';
 require dirname(__DIR__).'/src/ServerJar.php';
 require dirname(__DIR__).'/src/Startup.php';
 require __DIR__.'/Plugins.php';
+require __DIR__.'/PluginPackages.php';
 require __DIR__.'/ServerJar.php';
 require __DIR__.'/Status.php';
 require dirname(__DIR__).'/src/Console.php';
@@ -20,6 +22,8 @@ require __DIR__.'/Supervisor.php';
 require __DIR__.'/Recovery.php';
 require __DIR__.'/Startup.php';
 require __DIR__.'/PaperMigration.php';
+require __DIR__.'/Logs.php';
+require __DIR__.'/DockerAccess.php';
 
 function worker_write(string $file,array $value): void {
     $signed=json_encode(manager_sign($value),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
@@ -703,6 +707,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
     if ($op==='switch_to_paper') {
         return worker_switch_to_paper($id,$row,$path,$meta,$state,(string)($params['confirm_name']??''));
     }
+    if ($op==='clear_logs') return worker_clear_server_logs($id,$row,$meta,$state);
     if ($op==='configure_startup') return worker_configure_startup($id,$path,$meta,$params);
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
     if ($op==='install_server_jar') return worker_server_jar_install($id,$row,$meta,$params,$state);
@@ -961,9 +966,14 @@ function worker_main(array $argv): int {
     $lastRefresh=0;
     $lastRecovery=0;
     $lastUploadCleanup=0;
+    $lastDockerProbe=0;
     do {
         try {
             worker_touch_heartbeat();
+            if (time()-$lastDockerProbe>=30) {
+                worker_publish_docker_access();
+                $lastDockerProbe=time();
+            }
             if (time()-$lastRefresh>=10) {
                 worker_refresh($native);
                 $lastRefresh=time();
