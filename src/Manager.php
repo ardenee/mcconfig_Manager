@@ -62,7 +62,7 @@ function manager_job_id(string $value): string {
 }
 function manager_enqueue(string $operation, array $params = [], string $serverId = ''): string {
     $allowed = ['diagnostics', 'discover', 'install', 'adopt', 'status', 'check_updates', 'start',
-        'stop', 'restart', 'backup', 'update', 'uninstall', 'install_java', 'console_command'];
+        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command'];
     if (!in_array($operation, $allowed, true)) throw new InvalidArgumentException('Unknown manager operation.');
     if ($serverId !== '' && !preg_match('/^[a-f0-9]{12}$/D', $serverId)) throw new InvalidArgumentException('Invalid server ID.');
     $id = bin2hex(random_bytes(12));
@@ -122,11 +122,23 @@ function manager_running_state(string $serverId): array {
 function manager_form_job(array $post, array $config): string {
     $op = request_string($post,'operation',32);
     $id = request_string($post,'server_id',64);
-    $allowed = ['status','check_updates','start','stop','restart','backup','update','uninstall','adopt'];
+    $allowed = ['status','check_updates','start','stop','restart','backup','verify_backup','restore_backup','update','uninstall','adopt'];
     if (!in_array($op,$allowed,true)) throw new InvalidArgumentException('Unsupported server operation.');
     if (!isset($config['servers'][$id])) throw new InvalidArgumentException('Server no longer registered.');
     $params=[];
     if ($op==='update') $params['version']=request_string($post,'version',48);
+    if ($op==='verify_backup' || $op==='restore_backup') {
+        $params['backup_name']=request_string($post,'backup_name',48);
+        if (!preg_match('/^\d{8}-\d{6}-[a-f0-9]{6}\.zip$/D',$params['backup_name'])) {
+            throw new InvalidArgumentException('Select a valid server backup.');
+        }
+        if ($op==='restore_backup') {
+            $params['confirm_name']=request_string($post,'confirm_name',80);
+            if ($params['confirm_name']!==($config['servers'][$id]['name']??'')) {
+                throw new InvalidArgumentException('Type the exact server name to authorize restoration.');
+            }
+        }
+    }
     if ($op==='uninstall') {
         $params['delete_data']=!empty($post['delete_data']);
         $params['confirm_name']=request_string($post,'confirm_name',80);
@@ -136,6 +148,20 @@ function manager_form_job(array $post, array $config): string {
     }
     if ($op==='adopt') $params['server']=$config['servers'][$id];
     return manager_enqueue($op,$params,$id);
+}
+function manager_backup_files(string $id): array {
+    if (!preg_match('/^[a-f0-9]{12}$/D',$id)) return [];
+    manager_initialize();
+    $dir=manager_base().'/backups/'.$id;
+    if (!is_dir($dir)) return [];
+    $files=[];
+    foreach(glob($dir.'/*.zip')?:[] as $path) {
+        $name=basename($path);
+        if (!preg_match('/^\d{8}-\d{6}-[a-f0-9]{6}\.zip$/D',$name) || is_link($path)) continue;
+        $files[]=['name'=>$name,'size'=>(int)filesize($path),'created'=>(int)filemtime($path)];
+    }
+    usort($files,fn($a,$b)=>strcmp($b['name'],$a['name']));
+    return array_slice($files,0,40);
 }
 function manager_install_input(array $post): array {
     $edition = request_string($post,'edition',12);
@@ -156,4 +182,45 @@ function manager_install_input(array $post): array {
         throw new InvalidArgumentException('Managed native installation currently supports Vanilla and Paper Java. Use a container for other variants.');
     }
     return compact('name','edition','software','deployment','version','port','memory');
+}
+
+function manager_cancel_queued_job(string $id): bool {
+    manager_job_id($id);
+    $file=manager_base().'/queue/'.$id.'.json';
+    if (!is_file($file) || is_link($file)) return false;
+    try { $record=manager_unpack((string)file_get_contents($file)); }
+    catch(Throwable) {return false;}
+    if (($record['id']??'')!==$id) return false;
+    $cancelled=manager_base().'/queue/.cancelled-'.$id.'-'.bin2hex(random_bytes(3));
+    if (!@rename($file,$cancelled)) return false;
+    try {
+        atomic_write(manager_base().'/done/'.$id.'.json',json_encode(manager_sign([
+            'id'=>$id,'server_id'=>$record['server_id']??'',
+            'operation'=>$record['operation']??'unknown','state'=>'cancelled',
+            'message'=>'Queued job cancelled before execution','finished'=>time()
+        ]),JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES));
+    } finally {@unlink($cancelled);}
+    return true;
+}
+function manager_queued_jobs(): array {
+    manager_initialize();
+    $jobs=[];
+    foreach(array_slice(glob(manager_base().'/queue/*.json')?:[],0,30) as $path) {
+        try {
+            $record=manager_unpack((string)file_get_contents($path));
+            if (is_array($record) && ($record['id']??'')===basename($path,'.json')) $jobs[]=$record;
+        } catch(Throwable) {}
+    }
+    usort($jobs,fn($a,$b)=>($b['created']??0)<=>($a['created']??0));
+    return $jobs;
+}
+
+function manager_native_resume_requested(string $id): bool {
+    if (!preg_match('/^[a-f0-9]{12}$/D',$id)) return false;
+    $file=manager_base().'/supervisors/'.$id.'/desired.json';
+    if (!is_file($file) || is_link($file)) return false;
+    try {
+        $status=manager_unpack((string)file_get_contents($file));
+        return ($status['server_id']??'')===$id && ($status['running']??false)===true;
+    } catch(Throwable) {return false;}
 }

@@ -99,6 +99,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             redirect('console','&job='.$job);
         }
+        if ($action === 'manager_cancel_job') {
+            $job=request_string($_POST,'job_id',24);
+            if (!preg_match('/^[a-f0-9]{24}$/D',$job)) throw new InvalidArgumentException('Invalid queued job.');
+            if (!manager_cancel_queued_job($job)) {
+                throw new RuntimeException('Job is already running, completed or unavailable and cannot be cancelled here.');
+            }
+            $_SESSION['flash']='The queued job was cancelled without execution.';
+            redirect('manager');
+        }
+        if ($action === 'manager_backup_retention') {
+            $serverId=request_string($_POST,'server_id',64);
+            if (!isset($config['servers'][$serverId])) throw new RuntimeException('Unknown server.');
+            $keep=filter_var($_POST['backup_keep']??'',FILTER_VALIDATE_INT,
+                ['options'=>['min_range'=>3,'max_range'=>30]]);
+            if ($keep===false) throw new InvalidArgumentException('Keep between 3 and 30 backup snapshots.');
+            $config['servers'][$serverId]['backup_keep']=$keep;
+            save_config($config);
+            $_SESSION['flash']='Backup retention updated for the selected server.';
+            redirect('manager');
+        }
         if ($action === 'manager_action') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $job=manager_form_job($_POST,$config);
@@ -269,6 +289,12 @@ if ($authenticated && $tab==='manager') {
                 $config['servers'][$serverId]['version']=$result['version']??'unknown';
                 $config['servers'][$serverId]['jar']='server.jar';
             } else $config['servers'][$serverId]['install_state']='failed';
+            $changed=true;
+        }
+        if ($operation==='restore_backup' && $state==='succeeded' &&
+            isset($job['result']['version']) && isset($config['servers'][$serverId]) &&
+            ($config['servers'][$serverId]['version']??'')!==$job['result']['version']) {
+            $config['servers'][$serverId]['version']=$job['result']['version'];
             $changed=true;
         }
         if ($operation==='uninstall' && $state==='succeeded' && !empty($job['result']['removed']) &&

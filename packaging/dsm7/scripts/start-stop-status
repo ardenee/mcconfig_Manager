@@ -60,6 +60,10 @@ case "$1" in
     rm -f "$PID"
     exit 0
     ;;
+  check-native-stopped)
+    PHP="$(choose_php)" || { echo "PHP CLI is required to verify native servers before uninstall." >&2; exit 1; }
+    "$PHP" "$SCRIPT" check-native-stopped
+    ;;
   status) is_running ;;
   prestart) choose_php >/dev/null ;;
   prestop) exit 0 ;;

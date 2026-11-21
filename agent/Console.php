@@ -44,6 +44,17 @@ function worker_console_send(string $id, array $server, array $meta, string $inp
         }
         throw new RuntimeException('External native Bedrock has no RCON; start it under mcmanager to access its stdin console.');
     }
+    // Standalone Linux supervisors own the Minecraft stdin pipe. The main worker
+    // submits a signed message, keeping both processes independent.
+    if (PHP_OS_FAMILY==='Linux' && !isset($native[$id])) {
+        if (!supervisor_status($id)['active']) {
+            throw new RuntimeException('Native supervisor is not available to receive console commands.');
+        }
+        if ($command==='stop') supervisor_set_desired($id,false);
+        supervisor_enqueue($id,'command',$command);
+        return ['message'=>'Command queued for the independent native Minecraft supervisor.',
+            'response'=>''];
+    }
     $stdin=$native[$id]['stdin']??null;
     if (!is_resource($stdin)) throw new RuntimeException('Native Minecraft console is disconnected.');
     $bytes=@fwrite($stdin,$command."\n");

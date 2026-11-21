@@ -82,8 +82,13 @@ function worker_bedrock_ping(int $port): ?array {
 }
 function worker_native_metrics(string $id,array &$native): array {
     if (!worker_process_running($id,$native))return [];
-    $state=proc_get_status($native[$id]['process']);
-    $pid=(int)($state['pid']??0);
+    if (isset($native[$id]) && is_resource($native[$id]['process'])) {
+        $state=proc_get_status($native[$id]['process']);
+        $pid=(int)($state['pid']??0);
+    } else {
+        $state=supervisor_status($id);
+        $pid=(int)($state['child_pid']??0);
+    }
     if ($pid<=0)return [];
     $result=['pid'=>$pid];
     if (is_file('/proc/'.$pid.'/status')) {

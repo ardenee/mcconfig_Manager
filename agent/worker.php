@@ -9,18 +9,29 @@ require __DIR__.'/Status.php';
 require dirname(__DIR__).'/src/Console.php';
 require __DIR__.'/Console.php';
 require __DIR__.'/Rcon.php';
+require __DIR__.'/BackupRestore.php';
+require __DIR__.'/Supervisor.php';
+require __DIR__.'/Recovery.php';
 
 function worker_write(string $file,array $value): void {
     $signed=json_encode(manager_sign($value),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
     if (!is_dir(dirname($file)) && !mkdir(dirname($file),0700,true)) throw new RuntimeException('Cannot create worker output directory.');
     atomic_write($file,$signed);
 }
+function worker_touch_heartbeat(): void {
+    worker_write(manager_base().'/heartbeat.json',[
+        'timestamp'=>time(),'pid'=>getmypid(),'php'=>PHP_VERSION,
+        'message'=>'Worker active'
+    ]);
+}
 function worker_progress(int $percent,string $message): void {
+    worker_touch_heartbeat();
     $id=$GLOBALS['mcmanager_active_job']??'';
     if (!is_string($id) || !preg_match('/^[a-f0-9]{24}$/D',$id)) return;
     $message=substr(preg_replace('/[\r\n\x00-\x1f]+/',' ',$message)??'',0,300);
     worker_write(manager_base()."/running/$id.json",[
         'id'=>$id,'operation'=>$GLOBALS['mcmanager_active_operation']??'',
+        'server_id'=>$GLOBALS['mcmanager_active_server']??'',
         'state'=>'running','percent'=>max(0,min(100,$percent)),
         'message'=>$message,'updated'=>time()]);
 }
@@ -46,6 +57,7 @@ function worker_exec(array $command,int $limit=32768,?string $cwd=null,?array $e
 function worker_bin(string $name): ?string {
     $known=['docker'=>['/usr/local/bin/docker','/usr/bin/docker','/var/packages/ContainerManager/target/usr/bin/docker'],
         'java'=>['/usr/bin/java','/usr/local/bin/java'],
+        'setsid'=>['/usr/bin/setsid','/bin/setsid','/usr/local/bin/setsid'],
         'tar'=>['/bin/tar','/usr/bin/tar']][$name]??[];
     foreach(explode(PATH_SEPARATOR,(string)getenv('PATH')) as $dir) {
         if ($dir!=='') $known[]=$dir.DIRECTORY_SEPARATOR.$name.(PHP_OS_FAMILY==='Windows'?'.exe':'');
@@ -283,18 +295,11 @@ function worker_diagnostics(): array {
       'ram_total'=>$ramTotal,'ram_available'=>$ramFree,'free_storage'=>disk_free_space(worker_root()),
       'java'=>$javas,'docker'=>$dockerStatus,'instances_root'=>worker_root(),
       'container_supported'=>$docker && str_starts_with($dockerStatus,'available'),
-      'native_supported'=>true];
+      'native_supported'=>true,
+      'persistent_native_supported'=>PHP_OS_FAMILY==='Linux' && worker_bin('setsid')!==null];
 }
-function worker_backup(string $id,string $path): string {
-    $tar=worker_bin('tar');
-    if (!$tar) throw new RuntimeException('tar is required for server backups.');
-    $folder=manager_base().'/backups/'.$id;
-    if (!is_dir($folder) && !mkdir($folder,0700,true)) throw new RuntimeException('Backup directory not writable.');
-    $name=date('Ymd-His').'-'.bin2hex(random_bytes(3)).'.tar.gz';
-    $target=$folder.'/'.$name;
-    [$code,$out]=worker_exec([$tar,'-czf',$target,'-C',$path,'.'],4096);
-    if ($code!==0) { @unlink($target);throw new RuntimeException('Backup failed: '.substr($out,0,350)); }
-    return $target;
+function worker_backup(string $id,string $path,string $reason='manual'): string {
+    return worker_backup_create($id,$path,$reason);
 }
 
 /** Worker owns only explicitly registered Minecraft servers. */
@@ -451,11 +456,18 @@ function worker_docker_status_for(string $id,array $meta): string {
     return $code===0?$out:'unknown';
 }
 function worker_process_running(string $id,array &$native): bool {
-    if (!isset($native[$id]) || !is_resource($native[$id]['process'])) return false;
+    if (!isset($native[$id]) || !is_resource($native[$id]['process'])) {
+        return PHP_OS_FAMILY==='Linux' && !empty(supervisor_status($id)['active']);
+    }
     $info=proc_get_status($native[$id]['process']);
     return is_array($info) && !empty($info['running']);
 }
-function worker_native_start(string $id,string $path,array $meta,array &$native): void {
+function worker_native_state(string $id,array &$native): string {
+    if (worker_process_running($id,$native)) return 'running';
+    if (PHP_OS_FAMILY==='Linux' && supervisor_possibly_alive($id)) return 'running-uncertain';
+    return 'stopped';
+}
+function worker_native_spawn(string $id,string $path,array $meta,array &$native): void {
     if (worker_process_running($id,$native)) throw new RuntimeException('Native server is already running.');
     $port=(int)($meta['port']??0);
     if ($port>=1024 && $port<=65535 &&
@@ -494,7 +506,27 @@ function worker_native_start(string $id,string $path,array $meta,array &$native)
     stream_set_blocking($pipes[0],true);
     $native[$id]=['process'=>$proc,'stdin'=>$pipes[0],'path'=>$path];
 }
+function worker_native_start(string $id,string $path,array $meta,array &$native): void {
+    if (PHP_OS_FAMILY!=='Linux') {
+        worker_native_spawn($id,$path,$meta,$native);
+        return;
+    }
+    if (supervisor_possibly_alive($id)) {
+        throw new RuntimeException('Native server supervisor or Minecraft process already exists.');
+    }
+    $wanted=supervisor_desired($id);
+    supervisor_set_desired($id,true);
+    try {supervisor_launch($id);}
+    catch(Throwable $e) {
+        if (!$wanted) supervisor_set_desired($id,false);
+        throw $e;
+    }
+}
 function worker_native_stop(string $id,array &$native): void {
+    if (PHP_OS_FAMILY==='Linux' && !isset($native[$id])) {
+        supervisor_stop($id);
+        return;
+    }
     if (!worker_process_running($id,$native)) throw new RuntimeException('This native process is not supervised by the active worker.');
     @fwrite($native[$id]['stdin'],"stop\n");
     @fflush($native[$id]['stdin']);
@@ -573,7 +605,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
     $mode=$meta['deployment']??'native';
     $state=$mode==='container'
         ? worker_docker_status_for($id,$meta)
-        : (worker_process_running($id,$native)?'running':'stopped');
+        : worker_native_state($id,$native);
     $live=worker_live_stats($id,$meta,$state,$native);
     if (!empty($live['external_process']) && $state==='stopped') $state='running-external';
     if ($op==='status') {
@@ -582,6 +614,22 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
     }
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
+    if ($op==='verify_backup') {
+        return ['backup'=>worker_backup_verify($id,(string)($params['backup_name']??''),true),
+            'message'=>'Backup integrity verified; every file passed SHA-256 validation'];
+    }
+    if ($op==='restore_backup') {
+        if (!in_array($state,['stopped','exited','created'],true)) {
+            throw new RuntimeException('Stop the server before restoring; current state: '.$state);
+        }
+        if (($params['confirm_name']??'')!==($row['name']??'')) {
+            throw new RuntimeException('Type the exact server name to confirm restoration.');
+        }
+        if (($meta['deployment']??'native')==='container' && !worker_docker_owned_for($id,$meta)) {
+            throw new RuntimeException('The existing Minecraft container identity could not be verified.');
+        }
+        return worker_backup_restore($id,$path,(string)($params['backup_name']??''));
+    }
     if ($op==='check_updates') {
         if ($mode==='container') {
             return ['software'=>$meta['software']??'unknown','installed'=>$meta['version']??'unknown',
@@ -633,11 +681,27 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             $minimum=(int)($artifact['java_major']??worker_required_java($artifact['version']));
             if ($minimum===0 || $runtime['major']<$minimum)
                 throw new RuntimeException('Server update needs Java '.$minimum.'; installed Java '.$runtime['major']);
-            $backup=worker_backup($id,$path);
-            worker_download($artifact,$path.'/server.jar');
-            $meta['version']=$artifact['version'];
-            $meta['build']=$artifact['build']??'';
-            worker_save_meta($path,$meta);
+            $backup=worker_backup($id,$path,'pre-update');
+            $oldJar=$path.'/server.jar';
+            if (!is_file($oldJar) || is_link($oldJar)) {
+                throw new RuntimeException('A regular existing server JAR is required for managed updates.');
+            }
+            $rollback=$path.'/.mcmanager-rollback-'.bin2hex(random_bytes(6)).'.jar';
+            if (!copy($oldJar,$rollback)) throw new RuntimeException('Could not stage the previous JAR for rollback.');
+            $previousMeta=$meta;
+            try {
+                worker_progress(55,'Installing checksum-verified Minecraft update');
+                worker_download($artifact,$oldJar);
+                $meta['version']=$artifact['version'];
+                $meta['build']=$artifact['build']??'';
+                worker_save_meta($path,$meta);
+            } catch (Throwable $e) {
+                if (!copy($rollback,$oldJar)) {
+                    throw new RuntimeException('Update interrupted and automatic JAR rollback failed; recover from '.$backup.'. '.$e->getMessage());
+                }
+                worker_save_meta($path,$previousMeta);
+                throw new RuntimeException('Update failed; previous server JAR and metadata restored. '.$e->getMessage());
+            } finally {if (is_file($rollback)) @unlink($rollback);}
             return ['backup'=>$backup,'version'=>$meta['version'],'message'=>'Verified JAR installed; restart server to apply.'];
         }
         if (!worker_docker_owned_for($id,$meta)) throw new RuntimeException('Managed container identity mismatch.');
@@ -655,7 +719,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
         }
         [$code,$out]=worker_exec([$docker,'pull',$image],2048);
         if ($code!==0) throw new RuntimeException('Container image update failed: '.substr($out,0,500));
-        $backup=worker_backup($id,$path);
+        $backup=worker_backup($id,$path,'pre-update');
         [$code,$out]=worker_exec([$docker,'rm',worker_docker_name($id)]);
         if ($code!==0) throw new RuntimeException('Unable to remove stopped container: '.$out);
         try { worker_docker_run($id,$path,$meta,$image); }
@@ -725,6 +789,7 @@ function worker_process_one(array &$native): bool {
             $op=$request['operation'];$server=$request['server_id'];
             $GLOBALS['mcmanager_active_job']=$id;
             $GLOBALS['mcmanager_active_operation']=$op;
+            $GLOBALS['mcmanager_active_server']=$server;
             worker_write($running,['id'=>$id,'operation'=>$op,'server_id'=>$server,
                 'state'=>'running','message'=>'Worker processing request','started'=>time()]);
             $result=worker_run_operation($op,$server,$request['params'],$native);
@@ -738,7 +803,8 @@ function worker_process_one(array &$native): bool {
               'finished'=>time(),'message'=>substr($e->getMessage(),0,900)]);
             worker_log($id,$op.' failed: '.$e->getMessage());
         }
-        unset($GLOBALS['mcmanager_active_job'],$GLOBALS['mcmanager_active_operation']);
+        unset($GLOBALS['mcmanager_active_job'],$GLOBALS['mcmanager_active_operation'],
+            $GLOBALS['mcmanager_active_server']);
         @unlink($running);
         return true;
     }
@@ -754,7 +820,7 @@ function worker_refresh(array &$native): void {
             [$path,$meta]=worker_managed((string)$id,$row);
             $state=($meta['deployment']??'native')==='container'
                 ?worker_docker_status_for((string)$id,$meta)
-                :(worker_process_running((string)$id,$native)?'running':'stopped');
+                :worker_native_state((string)$id,$native);
             $live=worker_live_stats((string)$id,$meta,$state,$native);
             if (!empty($live['external_process']) && $state==='stopped') $state='running-external';
             worker_state((string)$id,['state'=>$state,'software'=>$meta['software']??'unknown',
@@ -766,11 +832,23 @@ function worker_refresh(array &$native): void {
 }
 function worker_main(array $argv): int {
     $mode=$argv[1]??'once';
-    if (!in_array($mode,['once','serve','doctor'],true)) {
-        fwrite(STDERR,"Usage: php agent/worker.php [serve|once|doctor]\n");
+    if (!in_array($mode,['once','serve','doctor','check-native-stopped'],true)) {
+        fwrite(STDERR,"Usage: php agent/worker.php [serve|once|doctor|check-native-stopped]\n");
         return 2;
     }
     manager_initialize();
+    if ($mode==='check-native-stopped') {
+        $rows=app_config()['servers']??[];
+        if (is_array($rows)) foreach($rows as $id=>$row) {
+            if (!is_string($id) || !preg_match('/^[a-f0-9]{12}$/D',$id) || !is_array($row)) continue;
+            if (($row['deployment']??'native')!=='native') continue;
+            if (supervisor_possibly_alive($id)) {
+                fwrite(STDERR,"Stop managed native Minecraft server ".($row['name']??$id)." before uninstalling mcmanager.\n");
+                return 1;
+            }
+        }
+        return 0;
+    }
     $lock=fopen(manager_base().'/worker.lock','c');
     if (!$lock||!flock($lock,LOCK_EX|LOCK_NB)) {
         fwrite(STDERR,"An mcmanager worker is already running.\n");
@@ -781,15 +859,22 @@ function worker_main(array $argv): int {
         echo json_encode(worker_diagnostics(),JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)."\n";
         return 0;
     }
+    // Inspect incomplete filesystem swaps and mark abandoned operations failed.
+    // Never automatically replay install/update/delete/restore jobs.
+    worker_reconcile_restore_swaps();
+    worker_reconcile_interrupted_jobs();
     $lastRefresh=0;
+    $lastRecovery=0;
     do {
         try {
-            worker_write(manager_base().'/heartbeat.json',[
-                'timestamp'=>time(),'pid'=>getmypid(),'php'=>PHP_VERSION,
-                'message'=>'Worker active']);
+            worker_touch_heartbeat();
             if (time()-$lastRefresh>=10) {
                 worker_refresh($native);
                 $lastRefresh=time();
+            }
+            if ($mode==='serve' && time()-$lastRecovery>=30) {
+                supervisor_recover_desired();
+                $lastRecovery=time();
             }
             if (worker_process_one($native)) continue;
         } catch (Throwable $e) {
