@@ -1,13 +1,11 @@
-# Original SPK archives may embed old credentials. Never commit.
-original-spk/
-# Local runtime secrets and data
-.env
-.env.*
-!.env.example
-*.log
-*.sqlite
-*.sqlite3
-*.sqlite-journal
+/original-spk/
+/dist/
+/tests/
+/var/*
+!/var/.htaccess
+!/var/index.php
+/.cache/
+/__pycache__/
+*.pyc
 .DS_Store
 Thumbs.db
-vendor-local/

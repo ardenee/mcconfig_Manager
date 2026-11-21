@@ -1,0 +1,48 @@
+{
+  "webservice": {
+    "services": [
+      {
+        "service": "mcconfig",
+        "display_name": "mcconfig",
+        "support_alias": true,
+        "support_server": false,
+        "type": "nginx_php",
+        "root": "mcconfig/public",
+        "index": [
+          "index.php"
+        ],
+        "icon": "ui/mcconfig_{0}.png",
+        "php": {
+          "profile_name": "mcconfig PHP 8.2",
+          "profile_desc": "PHP 8.2 profile for mcconfig",
+          "backend": 10,
+          "open_basedir": "/var/services/web_packages/mcconfig:/var/packages/mcconfig/var:/volume1:/volume2:/volume3:/volume4:/volume5:/volume6:/tmp:/var/services/tmp",
+          "extensions": ["zip"],
+          "user": "mcconfig",
+          "group": "http"
+        },
+        "connect_timeout": 30,
+        "read_timeout": 60,
+        "send_timeout": 30
+      }
+    ],
+    "portals": [
+      {
+        "service": "mcconfig",
+        "name": "mcconfig",
+        "display_name": "mcconfig",
+        "type": "alias",
+        "alias": "mcconfig"
+      }
+    ],
+    "pkg_dir_prepare": [
+      {
+        "source": "/var/packages/mcconfig/target/webapp",
+        "target": "mcconfig",
+        "mode": "0755",
+        "user": "mcconfig",
+        "group": "http"
+      }
+    ]
+  }
+}

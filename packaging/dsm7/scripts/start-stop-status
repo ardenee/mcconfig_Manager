@@ -1,0 +1,6 @@
+#!/bin/sh
+# Web Station manages the PHP-FPM service; no Minecraft process is controlled here.
+case "${1:-}" in
+  start|stop|status|prestart|prestop) exit 0 ;;
+  *) exit 1 ;;
+esac
