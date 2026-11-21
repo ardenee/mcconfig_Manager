@@ -24,6 +24,8 @@ REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js
             "src/Console.php", "src/ConsoleView.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
             "agent/Console.php", "agent/Rcon.php",
+            "agent/BackupRestore.php", "agent/Recovery.php",
+            "agent/Supervisor.php", "agent/native-supervisor.php",
             "var/.htaccess", "var/index.php"}
 
 

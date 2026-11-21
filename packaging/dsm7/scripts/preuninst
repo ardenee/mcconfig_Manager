@@ -1,3 +1,5 @@
 #!/bin/sh
 set -eu
+# Do not remove the manager while independently supervised Minecraft processes run.
+"$(dirname "$0")/start-stop-status" check-native-stopped
 exit 0

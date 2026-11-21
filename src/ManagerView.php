@@ -46,6 +46,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <div class="status-line"><span>Total RAM</span><strong><?= h(!empty($s['ram_total'])?round($s['ram_total']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
       <div class="status-line"><span>Available RAM</span><strong><?= h(!empty($s['ram_available'])?round($s['ram_available']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
       <div class="status-line"><span>Docker</span><strong><?= h($s['docker']??'') ?></strong></div>
+      <div class="status-line"><span>Persistent native processes</span><strong><?= !empty($s['persistent_native_supported'])?'Supported':'Unavailable — requires Linux setsid -f' ?></strong></div>
       <div class="status-line"><span>Managed storage</span><code><?= h($s['instances_root']??'') ?></code></div>
       <div class="status-line"><span>Available disk</span><strong><?= h(isset($s['free_storage'])?round($s['free_storage']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
     </div>
@@ -87,6 +88,11 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · <?= h($row['version']??'Unknown version') ?></p>
         <code><?= h($row['path']??'') ?></code>
       </div><strong><?= h($status) ?></strong></div>
+      <?php if (($row['deployment']??'native')==='native'): ?>
+        <p class="hint">Native recovery preference: <?= manager_native_resume_requested((string)$id)
+          ? 'Resume server after worker/NAS restart (when supported)'
+          : 'No automatic resume requested' ?></p>
+      <?php endif; ?>
       <p><a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Open console</a></p>
       <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
         <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>
@@ -110,6 +116,45 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
         <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
       </form>
+      <details class="manager-backups">
+        <summary>Backups and restoration (<?= count(manager_backup_files((string)$id)) ?> snapshots)</summary>
+        <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders. Synology ACLs are not preserved; externally owned/imported folders may require manual permission repair. Older TAR archives are retained but not restored directly.</p>
+        <form method="post" class="inline-form spaced-small">
+          <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_backup_retention">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <label>Retain most recent backup snapshots
+            <select name="backup_keep">
+              <?php foreach([3,5,10,15,20,30] as $keep): ?>
+                <option value="<?= $keep ?>" <?= (int)($row['backup_keep']??10)===$keep?'selected':'' ?>><?= $keep ?></option>
+              <?php endforeach; ?>
+            </select></label>
+          <button class="subtle" type="submit">Save retention</button>
+        </form>
+        <?php foreach(manager_backup_files((string)$id) as $backup): ?>
+          <div class="manager-backup-entry">
+            <div>
+              <strong><?= h($backup['name']) ?></strong>
+              <small><?= h(date('Y-m-d H:i',$backup['created'])) ?> · <?= h(round($backup['size']/1048576,1)) ?> MiB</small>
+            </div>
+            <form method="post" class="inline-form">
+              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
+              <button class="subtle" name="operation" value="verify_backup" <?= !$workerOnline?'disabled':'' ?>>Verify SHA-256</button>
+            </form>
+            <form method="post" class="inline-form" data-confirm="Restore this backup? You must stop the server first. The existing server will be backed up before restoration.">
+              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
+              <label>Confirm exact server name <input type="text" name="confirm_name" required autocomplete="off" placeholder="<?= h($row['name']??'') ?>"></label>
+              <button class="subtle" name="operation" value="restore_backup" <?= !$workerOnline?'disabled':'' ?>>Restore backup</button>
+            </form>
+          </div>
+        <?php endforeach; ?>
+        <?php if (!manager_backup_files((string)$id)): ?>
+          <p class="muted">No verified ZIP snapshots yet. Stop this server and use Backup to create one.</p>
+        <?php endif; ?>
+      </details>
       <form method="post" class="inline-form spaced-small" data-confirm="Unregister this server? Data deletion, if selected, cannot be undone.">
         <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
         <input type="hidden" name="server_id" value="<?= h($id) ?>">
@@ -152,6 +197,23 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
   <p class="hint">Native managed installation currently supports Java Vanilla and Paper. Containers support the listed Java software or Bedrock, subject to NAS architecture and installed Container Manager. No host Java packages are modified.</p>
+</section>
+
+<section class="panel spaced">
+  <div class="panel-title"><h2>Queued management jobs</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
+  <?php $queued=manager_queued_jobs(); ?>
+  <?php if (!$queued): ?><p class="muted">No pending jobs.</p><?php endif; ?>
+  <?php foreach($queued as $job): ?>
+    <div class="status-line">
+      <span><?= h($job['operation']??'Unknown') ?> — <?= h($all[$job['server_id']??'']['name']??'Host operation') ?></span>
+      <form method="post" class="inline-form" data-confirm="Cancel this queued operation before it starts?">
+        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_cancel_job">
+        <input type="hidden" name="job_id" value="<?= h($job['id']) ?>">
+        <button class="subtle">Cancel pending</button>
+      </form>
+    </div>
+  <?php endforeach; ?>
+  <p class="hint">Running tasks cannot be force-cancelled: terminating a backup, restore, update or server installation mid-operation can damage files.</p>
 </section>
 
 <section class="panel spaced"><div class="panel-title"><h2>Recent management jobs</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
