@@ -62,7 +62,7 @@ function manager_job_id(string $value): string {
 }
 function manager_enqueue(string $operation, array $params = [], string $serverId = ''): string {
     $allowed = ['diagnostics', 'discover', 'install', 'adopt', 'status', 'check_updates', 'start',
-        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar', 'configure_startup'];
+        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar', 'configure_startup','switch_to_paper'];
     if (!in_array($operation, $allowed, true)) throw new InvalidArgumentException('Unknown manager operation.');
     if ($serverId !== '' && !preg_match('/^[a-f0-9]{12}$/D', $serverId)) throw new InvalidArgumentException('Invalid server ID.');
     $id = bin2hex(random_bytes(12));
@@ -195,6 +195,7 @@ function manager_install_input(array $post): array {
         $options=array_merge($options,startup_settings([
             'memory'=>$memory,'xms'=>$post['xms']??256,
             'jvm_args'=>$post['jvm_args']??'',
+            'native_access'=>$post['native_access']??'0',
             'netty_workdir'=>$post['netty_workdir']??'1'
         ],$memory));
     }
@@ -240,4 +241,27 @@ function manager_native_resume_requested(string $id): bool {
         $status=manager_unpack((string)file_get_contents($file));
         return ($status['server_id']??'')===$id && ($status['running']??false)===true;
     } catch(Throwable) {return false;}
+}
+
+/** Colour-coded current status from signed, recent worker observations.
+ * Terminal job history does not affect a server's current health.
+ */
+function manager_server_status(array $server,array $snapshot,bool $workerOnline): array {
+    $installation=(string)($server['install_state']??'ready');
+    if ($installation==='failed') return ['label'=>'Setup failed','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Review the failed installation job'];
+    if ($installation==='pending') return ['label'=>'Installing','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Provisioning is in progress'];
+    if (!$workerOnline) return ['label'=>'Status unavailable','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Management worker offline'];
+    $checked=(int)($snapshot['checked']??0);
+    if ($checked<=0 || abs(time()-$checked)>45) {
+        return ['label'=>'Status outdated','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Refresh the server status'];
+    }
+    $state=strtolower((string)($snapshot['state']??'unknown'));
+    if ($state==='running') return ['label'=>'Running','tone'=>'running','running'=>true,'stopped'=>false,'hint'=>'Minecraft process is running'];
+    if (in_array($state,['stopped','exited','created'],true)) {
+        return ['label'=>'Stopped','tone'=>'stopped','running'=>false,'stopped'=>true,'hint'=>'Minecraft is not running'];
+    }
+    if ($state==='running-external') return ['label'=>'Running externally','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Process is outside mcmanager supervision'];
+    if ($state==='starting') return ['label'=>'Starting','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Waiting for Minecraft to become ready'];
+    if ($state==='running-uncertain') return ['label'=>'Process unverified','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Minecraft PID exists but its supervisor is not responding'];
+    return ['label'=>'Needs attention','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'State: '.$state];
 }

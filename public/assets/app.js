@@ -2,8 +2,9 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-auto-submit]').forEach(el => el.addEventListener('change', () => el.form?.requestSubmit()));
   // Delegation also covers job controls replaced during live updates.
   document.addEventListener('submit', event => {
-    const form = event.target.closest?.('form[data-confirm]');
-    if (form && !window.confirm(form.dataset.confirm || 'Are you sure?')) event.preventDefault();
+    const form = event.target.closest?.('form');
+    const confirmation = event.submitter?.dataset?.confirm || form?.dataset?.confirm;
+    if (confirmation && !window.confirm(confirmation)) event.preventDefault();
   });
   document.querySelector('[data-toggle-nav]')?.addEventListener('click', () => document.body.classList.toggle('show-sidebar'));
   document.querySelectorAll('.sidebar nav a').forEach(el => el.addEventListener('click', () => document.body.classList.remove('show-sidebar')));
@@ -149,6 +150,26 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!next.querySelector('[data-manager-recent]')) {
         throw new Error('Management session expired or page not available');
       }
+      const workerStatus = document.querySelector('[data-worker-status]');
+      const nextWorkerStatus = next.querySelector('[data-worker-status]');
+      if (workerStatus && nextWorkerStatus && workerStatus.outerHTML !== nextWorkerStatus.outerHTML) {
+        workerStatus.replaceWith(document.importNode(nextWorkerStatus, true));
+      }
+      // Refresh the colour-coded status and main controls without replacing
+      // expanded settings forms or unsaved input in any server card.
+      const liveCards = Array.from(next.querySelectorAll?.('[data-server-card]') || []);
+      (document.querySelectorAll?.('[data-server-card]') || []).forEach(card => {
+        const refreshed = liveCards.find(candidate =>
+          candidate.dataset.serverCard === card.dataset.serverCard);
+        if (!refreshed) return;
+        for (const selector of ['[data-server-status]', '[data-server-actions]']) {
+          const oldPart = card.querySelector(selector);
+          const newPart = refreshed.querySelector(selector);
+          if (oldPart && newPart && oldPart.outerHTML !== newPart.outerHTML) {
+            oldPart.replaceWith(document.importNode(newPart, true));
+          }
+        }
+      });
       for (const selector of ['[data-manager-job]', '[data-manager-queued]', '[data-manager-recent]']) {
         const current = document.querySelector(selector);
         const fresh = next.querySelector(selector);
@@ -173,4 +194,53 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   window.addEventListener('focus', refresh);
   refresh();
+});
+
+
+// Allow plugin JARs to be dropped onto their own upload target.
+// Native file input remains the fallback; server-side validation is unchanged.
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('[data-plugin-dropzone]').forEach(zone => {
+    const input = zone.querySelector('[data-plugin-file]');
+    const label = zone.querySelector('[data-plugin-filename]');
+    if (!input) return;
+    input.addEventListener('change', () => {
+      if (label) label.textContent = input.files?.[0]?.name || 'No file selected';
+    });
+    zone.addEventListener('dragenter', event => {
+      event.preventDefault();
+      zone.classList.add('is-dragover');
+    });
+    zone.addEventListener('dragover', event => {
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      zone.classList.add('is-dragover');
+    });
+    zone.addEventListener('dragleave', event => {
+      if (!zone.contains(event.relatedTarget)) zone.classList.remove('is-dragover');
+    });
+    zone.addEventListener('drop', event => {
+      event.preventDefault();
+      zone.classList.remove('is-dragover');
+      const file = event.dataTransfer?.files?.[0];
+      if (!file || !/\.jar$/i.test(file.name)) {
+        if (label) label.textContent = 'Choose a Minecraft plugin .jar file';
+        return;
+      }
+      try {
+        const picked = new DataTransfer();
+        picked.items.add(file);
+        input.files = picked.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      } catch (error) {
+        if (label) label.textContent = 'Drag-and-drop is unsupported by this browser; use Choose file.';
+      }
+    });
+    zone.addEventListener('keydown', event => {
+      if (event.target === zone && (event.key === 'Enter' || event.key === ' ')) {
+        event.preventDefault();
+        input.click();
+      }
+    });
+  });
 });

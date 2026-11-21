@@ -135,6 +135,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['server_id']=$id;
             redirect('manager','&job='.$job);
         }
+        if ($action==='plugin_enable_paper') {
+            if (!manager_online()) throw new RuntimeException('Start the manager service before changing the server implementation.');
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$serverId]??null;
+            if (!is_array($row)||($row['software']??'')!=='vanilla'||
+                ($row['edition']??'java')!=='java'||($row['deployment']??'native')!=='native'||
+                ($row['install_state']??'ready')!=='ready') {
+                throw new RuntimeException('Choose a ready native Vanilla Java server to enable Paper plugins.');
+            }
+            $confirm=request_string($_POST,'confirm_name',80);
+            if ($confirm!==($row['name']??'')) {
+                throw new RuntimeException('Enter the exact destination server name to authorize this backup and software change.');
+            }
+            if (empty($_POST['stopped'])) {
+                throw new RuntimeException('Confirm that Minecraft has been stopped before switching to Paper.');
+            }
+            $job=manager_enqueue('switch_to_paper',['confirm_name'=>$confirm],$serverId);
+            $_SESSION['server_id']=$serverId;
+            redirect('manager','&job='.$job);
+        }
         if (in_array($action,['plugin_upload','plugin_url','plugin_remove'],true)) {
             if (!manager_online()) throw new RuntimeException('Plugin management requires the local worker.');
             $serverId=console_server_id(request_string($_POST,'server_id',64));
@@ -447,10 +467,18 @@ if ($authenticated && $tab==='manager') {
                 $changed=true;
             }
         }
+        if ($operation==='switch_to_paper' && $state==='succeeded' &&
+            isset($config['servers'][$serverId]) &&
+            ($config['servers'][$serverId]['software']??'')==='vanilla' &&
+            ($job['result']['software']??'')==='paper') {
+            $config['servers'][$serverId]['software']='paper';
+            $config['servers'][$serverId]['version']=(string)($job['result']['version']??$config['servers'][$serverId]['version']??'');
+            $changed=true;
+        }
         if ($operation==='configure_startup' && $state==='succeeded' &&
             isset($config['servers'][$serverId]) &&
             (int)($job['finished']??0)>(int)($config['servers'][$serverId]['startup_applied_at']??0)) {
-            foreach(['memory','xms','jvm_args','netty_workdir'] as $key) {
+            foreach(['memory','xms','jvm_args','netty_workdir','native_access'] as $key) {
                 if (array_key_exists($key,$job['result']??[])) {
                     $config['servers'][$serverId][$key]=$job['result'][$key];
                 }
@@ -536,8 +564,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.3">
-<script src="assets/app.js?v=0.5.3" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.4">
+<script src="assets/app.js?v=0.5.4" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

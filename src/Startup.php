@@ -27,7 +27,8 @@ function startup_arguments(string $value): array {
             preg_match('/^-Dfile\.encoding=UTF-8$/D',$flag) ||
             preg_match('/^-Djava\.net\.preferIPv4Stack=(?:true|false)$/D',$flag) ||
             preg_match('/^-Djava\.awt\.headless=true$/D',$flag) ||
-            preg_match('/^-Duser\.timezone=[A-Za-z][A-Za-z0-9_+\-\/]{0,63}$/D',$flag);
+            preg_match('/^-Duser\.timezone=[A-Za-z][A-Za-z0-9_+\-\/]{0,63}$/D',$flag) ||
+            $flag==='--enable-native-access=ALL-UNNAMED';
         if (!$safe) {
             throw new InvalidArgumentException('Unsupported JVM option: '.$flag.'. Only documented GC, CPU, thread, timezone and encoding flags are allowed. Configure heap separately.');
         }
@@ -47,6 +48,10 @@ function startup_settings(array $input,int $defaultMemory=2048): array {
     $raw=$input['jvm_args']??'';
     if (!is_string($raw)) throw new InvalidArgumentException('Invalid JVM arguments.');
     $args=startup_arguments($raw);
+    $native=$input['native_access']??'0';
+    if (!in_array($native,['0','1',0,1,false,true],true)) {
+        throw new InvalidArgumentException('Invalid native library access option.');
+    }
     $netty=$input['netty_workdir']??'1';
     if (!in_array($netty,['0','1',0,1,false,true],true)) {
         throw new InvalidArgumentException('Invalid Netty native-library work directory setting.');
@@ -55,6 +60,7 @@ function startup_settings(array $input,int $defaultMemory=2048): array {
         'xms'=>$min,
         'memory'=>$max,
         'jvm_args'=>implode("\n",$args),
+        'native_access'=>(bool)$native,
         'netty_workdir'=>((string)(int)(bool)$netty)==='1'
     ];
 }
