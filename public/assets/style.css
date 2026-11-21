@@ -116,3 +116,15 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-docker-guide li{margin-bottom:11px}
 .mc-docker-commands{margin:7px 0;padding:9px 12px;overflow-x:auto;background:#17253c;color:#f2f5ff;border-radius:7px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
 @media(max-width:640px){.mc-docker-facts{grid-template-columns:1fr}}
+
+/* Staged Synology Bedrock installation: clear actions without crowded panels. */
+.mc-bedrock-install>.hint{margin:8px 0 12px}
+.mc-bedrock-steps{display:grid;gap:12px;margin:12px 0}
+.mc-bedrock-step{border:1px solid #dfe6ee;background:var(--panel-bg,#fff);border-radius:9px;padding:13px 16px}
+.mc-bedrock-step h3{font-size:14px;margin:0 0 5px}
+.mc-bedrock-step>.hint{margin:3px 0 10px}
+.mc-bedrock-step form{display:grid;gap:10px}
+.mc-bedrock-step .form-row{gap:11px}
+.mc-bedrock-step .form-row>label{min-width:140px}
+.mc-bedrock-step button{justify-self:start}
+@media(max-width:700px){.mc-bedrock-step{padding:11px}.mc-bedrock-step .form-row{grid-template-columns:1fr}}

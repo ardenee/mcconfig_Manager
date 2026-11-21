@@ -71,17 +71,17 @@ function dsm_approval_container_matches(array $details,array $server,string $nam
     if ($actual!=='' && ltrim($actual,'/')!==$name) return false;
     $image=(string)($info['Config']['Image']??$info['image']??$info['ImageName']??'');
     $imageOk=(($server['edition']??'java')==='bedrock')
-        ?preg_match('~^(?:docker\.io/)?itzg/minecraft-bedrock-server(?::|@|$)~iD',$image)
+        ?preg_match('~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD',$image)
         :preg_match('~^(?:docker\.io/)?itzg/minecraft-server(?::|@|$)~iD',$image);
     if (!$imageOk) return false;
     $registered=realpath((string)($server['path']??''));
     if ($registered===false) return false;
-    $mounts=$info['Mounts']??$info['mounts']??[];
+    $mounts=$info['Mounts']??$info['mounts']??$info['volumes']??$info['volume_bindings']??[];
     if (!is_array($mounts)) return false;
     foreach($mounts as $mount) {
         if (!is_array($mount))continue;
-        if (($mount['Destination']??$mount['destination']??'')!=='/data')continue;
-        if (realpath((string)($mount['Source']??$mount['source']??''))===$registered)return true;
+        if (($mount['Destination']??$mount['destination']??$mount['mount_point']??$mount['container_path']??'')!=='/data')continue;
+        if (realpath((string)($mount['Source']??$mount['source']??$mount['host_volume_file']??$mount['host_path']??''))===$registered)return true;
     }
     return false;
 }
@@ -94,7 +94,7 @@ function dsm_approval_once(
     string $account,string $password,string $operation,
     ?array $server=null,string $otp='',?callable $send=null
 ): array {
-    if (!in_array($operation,['test','start','stop'],true)) {
+    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-create','bedrock-verify'],true)) {
         throw new InvalidArgumentException('Unsupported DSM one-time operation.');
     }
     if (!preg_match('/^[\w.@-]{1,64}$/D',$account) ||
@@ -104,10 +104,11 @@ function dsm_approval_once(
     if ($otp!=='' && !preg_match('/^[0-9]{6,8}$/D',$otp)) {
         throw new InvalidArgumentException('Enter a valid DSM one-time verification code.');
     }
-    if ($operation!=='test' && (!$server ||
+    if (in_array($operation,['start','stop','bedrock-verify'],true) && (!$server ||
         ($server['deployment']??'native')!=='container' ||
-        !in_array(($server['install_state']??'ready'),['ready','imported'],true))) {
-        throw new RuntimeException('Start/stop requires a registered, ready Minecraft container.');
+        !in_array(($server['install_state']??'ready'),
+            $operation==='bedrock-verify'?['ready','imported','unverified']:['ready','imported'],true))) {
+        throw new RuntimeException('Select a registered Minecraft container; start/stop requires a verified, ready server.');
     }
     $send=$send??'dsm_approval_post';
     $session='';
@@ -132,6 +133,21 @@ function dsm_approval_once(
             $headers=$token!==''?['X-SYNO-TOKEN: '.$token]:[];
             return $send($params,$headers);
         };
+        if (in_array($operation,['bedrock-image','bedrock-pull','bedrock-create'],true)) {
+            return dsm_bedrock_api_action($api,$operation,$server);
+        }
+        if ($operation==='bedrock-verify') {
+            $name=dsm_approval_container_name((string)($server['container_name']??''));
+            $details=dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Container','version'=>'1',
+                'method'=>'get','name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
+            ]),'Bedrock container verification');
+            if (!dsm_approval_container_matches($details,$server,$name)) {
+                throw new RuntimeException('DSM did not confirm the container image and /data bind mount. Nothing was started.');
+            }
+            return ['operation'=>'bedrock-verify','verified'=>true,'container'=>$name,
+                'message'=>'DSM verified the registered Bedrock container. Approve Start separately when ready.'];
+        }
         if ($operation==='test') {
             $found=dsm_approval_checked($api([
                 'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'list',

@@ -9,6 +9,7 @@ require dirname(__DIR__) . '/src/Plugins.php';
 require dirname(__DIR__) . '/src/PluginPackages.php';
 require dirname(__DIR__) . '/src/DockerAccess.php';
 require dirname(__DIR__) . '/src/DsmOnDemand.php';
+require dirname(__DIR__) . '/src/DsmBedrock.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
 require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
@@ -91,13 +92,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if ($tries>=4) throw new RuntimeException('Too many DSM login attempts. Try again in 15 minutes.');
             $_SESSION['dsm_approval_since']=$since;
             $_SESSION['dsm_approval_tries']=$tries+1;
-            $operation=request_string($_POST,'dsm_operation',12);
+            $operation=request_string($_POST,'dsm_operation',18);
             $row=null;
-            if ($operation!=='test') {
+            $serverId='';
+            if (in_array($operation,['start','stop','bedrock-verify'],true)) {
                 $serverId=console_server_id(request_string($_POST,'server_id',64));
                 $row=$config['servers'][$serverId]??null;
                 if (!is_array($row) || ($row['deployment']??'native')!=='container') {
                     throw new RuntimeException('Select a registered Minecraft container before requesting that action.');
+                }
+            } elseif ($operation==='bedrock-create') {
+                if (!in_array(strtolower(php_uname('m')),['x86_64','amd64'],true)) {
+                    throw new RuntimeException('Linux Bedrock Dedicated Server requires an x86-64 NAS. The detected architecture is not supported.');
+                }
+                $row=dsm_bedrock_install_options($_POST);
+                foreach(($config['servers']??[]) as $existing) {
+                    if (!is_array($existing)) continue;
+                    if (($existing['edition']??'java')==='bedrock' &&
+                        ($existing['port']??null)===$row['port']) {
+                        throw new RuntimeException('A registered Bedrock server already uses this UDP port.');
+                    }
+                    if (($existing['container_name']??'')===$row['container_name']) {
+                        throw new RuntimeException('This container is already registered.');
+                    }
                 }
             }
             $dsmUser=request_string($_POST,'dsm_account',64);
@@ -106,6 +123,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 if (!is_string($dsmPassword)) throw new InvalidArgumentException('DSM administrator password is required.');
                 $dsmReport=dsm_approval_once($dsmUser,$dsmPassword,$operation,$row,$otp);
+                if (($dsmReport['operation']??'')==='bedrock-create') {
+                    $created=$dsmReport['server']??null;
+                    if (!is_array($created) || !isset($created['server_id'])) {
+                        throw new RuntimeException('DSM created a container but its local registration could not be completed. Inspect Container Manager.');
+                    }
+                    $newId=$created['server_id'];
+                    unset($created['server_id'],$created['eula']);
+                    $created['control_mode']='dsm-on-demand';
+                    $created['jar']='';
+                    $created['worlds_path']=$created['path'].'/worlds';
+                    $created['install_state']=!empty($dsmReport['verified'])?'ready':'unverified';
+                    $config['servers'][$newId]=$created;
+                    save_config($config);
+                    $_SESSION['server_id']=$newId;
+                } elseif (($dsmReport['operation']??'')==='bedrock-verify' && $serverId!=='') {
+                    $config['servers'][$serverId]['install_state']='ready';
+                    save_config($config);
+                    $_SESSION['server_id']=$serverId;
+                }
                 $_SESSION['dsm_approval_tries']=0;
                 $message=$dsmReport['message'];
                 $tab='manager';
@@ -298,6 +334,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('manager');
         }
         if ($action === 'manager_action') {
+            $requestedId=request_string($_POST,'server_id',64);
+            if (($config['servers'][$requestedId]['control_mode']??'')==='dsm-on-demand') {
+                throw new RuntimeException('This container uses temporary DSM administrator authorization. Choose an action under Experimental: authorize one DSM Container Manager action.');
+            }
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $job=manager_form_job($_POST,$config);
             redirect('manager','&job='.$job);
@@ -629,8 +669,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.8">
-<script src="assets/app.js?v=0.5.8" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.9">
+<script src="assets/app.js?v=0.5.9" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
