@@ -592,8 +592,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.5">
-<script src="assets/app.js?v=0.5.5" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.6">
+<script src="assets/app.js?v=0.5.6" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
