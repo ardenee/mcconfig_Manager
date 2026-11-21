@@ -8,6 +8,7 @@ require dirname(__DIR__) . '/src/Uploads.php';
 require dirname(__DIR__) . '/src/Plugins.php';
 require dirname(__DIR__) . '/src/PluginPackages.php';
 require dirname(__DIR__) . '/src/DockerAccess.php';
+require dirname(__DIR__) . '/src/DsmOnDemand.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
 require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
@@ -37,6 +38,7 @@ if (!isset($tabs[$tab])) $tab = 'overview';
 $message = (string)($_SESSION['flash'] ?? '');
 unset($_SESSION['flash']);
 $error = '';
+$dsmReport = null;
 $selected = '';
 $server = null;
 
@@ -77,6 +79,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION = [];
             session_regenerate_id(true);
             redirect();
+        }
+        if ($action === 'dsm_approve_once') {
+            if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('This approval mode is available only on a Synology/Linux installation.');
+            if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off') {
+                throw new RuntimeException('Open mcmanager over HTTPS before entering DSM administrator credentials.');
+            }
+            $tries=(int)($_SESSION['dsm_approval_tries']??0);
+            $since=(int)($_SESSION['dsm_approval_since']??0);
+            if ($since===0||time()-$since>900) {$tries=0;$since=time();}
+            if ($tries>=4) throw new RuntimeException('Too many DSM login attempts. Try again in 15 minutes.');
+            $_SESSION['dsm_approval_since']=$since;
+            $_SESSION['dsm_approval_tries']=$tries+1;
+            $operation=request_string($_POST,'dsm_operation',12);
+            $row=null;
+            if ($operation!=='test') {
+                $serverId=console_server_id(request_string($_POST,'server_id',64));
+                $row=$config['servers'][$serverId]??null;
+                if (!is_array($row) || ($row['deployment']??'native')!=='container') {
+                    throw new RuntimeException('Select a registered Minecraft container before requesting that action.');
+                }
+            }
+            $dsmUser=request_string($_POST,'dsm_account',64);
+            $dsmPassword=$_POST['dsm_password']??null;
+            $otp=request_string($_POST,'dsm_otp',8);
+            try {
+                if (!is_string($dsmPassword)) throw new InvalidArgumentException('DSM administrator password is required.');
+                $dsmReport=dsm_approval_once($dsmUser,$dsmPassword,$operation,$row,$otp);
+                $_SESSION['dsm_approval_tries']=0;
+                $message=$dsmReport['message'];
+                $tab='manager';
+            } finally {
+                unset($_POST['dsm_password'],$_POST['dsm_otp']);
+                if (isset($dsmPassword) && is_string($dsmPassword) && function_exists('sodium_memzero')) sodium_memzero($dsmPassword);
+                unset($dsmPassword,$otp,$dsmUser);
+            }
         }
         if ($action === 'manager_diagnostics' || $action === 'manager_discover') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
@@ -592,8 +629,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.7">
-<script src="assets/app.js?v=0.5.7" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.8">
+<script src="assets/app.js?v=0.5.8" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
@@ -682,6 +719,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <div class="status-line"><span>PHP session support</span><strong><?= extension_loaded('session') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>PHP ZIP support</span><strong><?= extension_loaded('zip') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>PHP zlib support</span><strong><?= extension_loaded('zlib') ? 'Enabled' : 'Missing' ?></strong></div>
+      <div class="status-line"><span>PHP curl support (one-time DSM authorization)</span><strong><?= extension_loaded('curl') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>open_basedir</span><code class="settings-path"><?= h(ini_get('open_basedir') ?: 'Not restricted') ?></code></div>
       <div class="status-line"><span>Upload maximum</span><strong><?= h(ini_get('upload_max_filesize')) ?></strong></div>
       <div class="status-line"><span>Post maximum</span><strong><?= h(ini_get('post_max_size')) ?></strong></div>

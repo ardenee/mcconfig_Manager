@@ -19,7 +19,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <?php if (!$workerOnline): ?>
     <div class="alert warning">The management service is offline; status information and server controls may not be available. Start mcconfig in DSM Package Center.</div>
   <?php elseif (!$dockerAvailable): ?>
-    <p class="hint">Container Manager control is not enabled for this worker. To use Bedrock or container servers, expand <strong>Create a Minecraft server</strong> below for the Docker permission requirements and administrator setup guide.</p>
+    <p class="hint">The worker has no permanent Docker access. For an existing supported container, try <strong>Experimental: authorize one DSM Container Manager action</strong> below. No group membership is needed for that one-time test. New container creation remains disabled until its DSM API flow is verified.</p>
   <?php endif; ?>
   <details class="mc-worker-tools">
     <summary>Diagnostics and server discovery</summary>
@@ -31,6 +31,62 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   </details>
 </section>
 
+
+<details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)?'open':'' ?>>
+  <summary>Experimental: authorize one DSM Container Manager action (no saved credentials)</summary>
+  <p class="hint">Use a DSM administrator account for <strong>one operation only</strong>. Credentials and the temporary DSM session are used in this HTTPS request, then discarded; the adapter attempts DSM logout even when an operation fails. The mcconfig service account keeps its normal restricted permissions.</p>
+  <p class="hint">This initial version can test Docker visibility and start or stop an <em>already registered, verified</em> Minecraft container. Creating Bedrock images or containers through this API is not yet enabled until the NAS's image/profile APIs have been validated.</p>
+  <?php if (PHP_OS_FAMILY!=='Linux'): ?>
+    <div class="alert warning">DSM authorization is available only when running the web interface on the Synology NAS.</div>
+  <?php elseif (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off'): ?>
+    <div class="alert warning">Open mcmanager using <strong>HTTPS</strong> to enter DSM administrator credentials. No password form is displayed over HTTP.</div>
+  <?php elseif (!extension_loaded('curl')): ?>
+    <div class="alert warning">Enable the PHP <code>curl</code> extension in the mcconfig Web Station profile. The SPK requests it from version 0.5.8 onward.</div>
+  <?php else: ?>
+    <form action="?tab=manager#mc-dsm-on-demand" method="post" autocomplete="off" class="mc-dsm-approval-form">
+      <?php hidden_csrf(); ?>
+      <input type="hidden" name="action" value="dsm_approve_once">
+      <div class="form-row">
+        <label>Action to authorize
+          <select name="dsm_operation" required>
+            <option value="test">Test DSM authorization &amp; list containers (read-only)</option>
+            <?php if (array_filter($all,fn($s)=>is_array($s)&&($s['deployment']??'native')==='container'&&!empty($s['container_name']))): ?>
+              <option value="start">Start one registered Minecraft container</option>
+              <option value="stop">Stop one registered Minecraft container</option>
+            <?php endif; ?>
+          </select>
+        </label>
+        <label>Target (used only for Start/Stop)
+          <select name="server_id">
+            <option value="">No target — authorization test</option>
+            <?php foreach($all as $targetId=>$targetRow): ?>
+              <?php if (is_array($targetRow)&&($targetRow['deployment']??'native')==='container'&&!empty($targetRow['container_name'])): ?>
+                <option value="<?= h($targetId) ?>"><?= h($targetRow['name']??$targetId) ?> — <?= h($targetRow['container_name']) ?></option>
+              <?php endif; ?>
+            <?php endforeach; ?>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>DSM administrator username <input name="dsm_account" autocomplete="off" maxlength="64" required></label>
+        <label>DSM administrator password <input type="password" name="dsm_password" autocomplete="new-password" maxlength="1024" required></label>
+        <label>DSM one-time code (if enabled) <input name="dsm_otp" autocomplete="off" inputmode="numeric" maxlength="8" placeholder="Optional"></label>
+      </div>
+      <button class="primary" type="submit">Authorize selected DSM action</button>
+      <p class="hint">Use <strong>HTTPS</strong> to access mcmanager before entering DSM credentials. The server contacts DSM at <code>127.0.0.1:5000</code> locally, without redirects, proxies, or externally supplied destinations. Authentication is limited to four attempts per 15 minutes. No background or unattended Docker access is granted.</p>
+    </form>
+  <?php endif; ?>
+  <?php if (is_array($dsmReport)): ?>
+    <div class="alert success"><?= h($dsmReport['message']??'DSM operation succeeded') ?></div>
+    <?php if (($dsmReport['operation']??'')==='test'): ?>
+      <details open><summary>DSM Container Manager reported <?= (int)($dsmReport['count']??0) ?> container(s)</summary>
+        <?php foreach($dsmReport['containers']??[] as $dsmItem): ?>
+          <div class="status-line"><span><?= h($dsmItem['name']??'') ?> <small><?= h($dsmItem['image']??'') ?></small></span><strong><?= h($dsmItem['status']??'') ?></strong></div>
+        <?php endforeach; ?>
+      </details>
+    <?php endif; ?>
+  <?php endif; ?>
+</details>
 
 <section class="panel spaced" data-manager-servers>
   <h2>Your Minecraft servers</h2>
@@ -274,12 +330,12 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     if (!preg_match('/^[A-Za-z0-9_@.-]+$/D',$dockerUser)) $dockerUser='mcconfig';
   ?>
     <div class="mc-docker-warning alert warning">
-      <strong>Container installation unavailable: Docker permission required</strong>
+      <strong>Worker-based container installation unavailable: no Docker socket permission</strong>
       <p><?= h($dockerAccess['message']) ?></p>
-      <p><strong>Required permission:</strong> The mcmanager service account needs <strong>read and write access</strong> to the Docker daemon socket at <code>/var/run/docker.sock</code>.</p>
+      <p><strong>Optional legacy worker method:</strong> The worker would require read/write permission on <code>/var/run/docker.sock</code>. For one-off existing-container actions, use the temporary DSM administrator authorization section above instead. It does not alter package group memberships.</p>
       <p><strong>What to check:</strong> <?= h($dockerGuide['message']) ?></p>
       <details class="mc-docker-guide">
-        <summary>Administrator guide: enable Container Manager access</summary>
+        <summary>Advanced alternative: grant ongoing Docker socket access to the worker</summary>
         <div class="mc-docker-facts">
           <div><span>Service account</span><code><?= h($dockerUser) ?></code></div>
           <div><span>Socket group</span><code><?= h((string)($dockerAccess['socket_group']??'Not detected')) ?></code></div>
