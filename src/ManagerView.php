@@ -20,18 +20,60 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 </section>
 
 <section class="panel spaced">
-  <h2>Java runtime management</h2>
-  <p class="muted">Install or update an Eclipse Temurin JRE alongside other runtimes, without modifying DSM's system Java. The worker verifies the upstream SHA-256 checksum before extraction.</p>
-  <form method="post" class="inline-form"><?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install_java">
-    <label>Java LTS release <select name="major"><option value="25">Java 25 — Minecraft 26.x</option><option value="21">Java 21 — Minecraft 1.20.5–1.21.x</option><option value="17">Java 17 — older servers</option></select></label>
-    <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Install / update managed Java</button>
-  </form>
-  <p class="hint">Native installation requires Linux with a compatible x64 or ARM64 architecture. Existing Java installations remain untouched. Java inside containers is managed by their images.</p>
+  <div class="panel-title"><div><h2>Java runtime management</h2>
+    <p class="muted">Install a managed Eclipse Temurin JRE without replacing DSM's system Java. Every method verifies the official SHA-256 and the executable's Linux CPU architecture.</p></div>
+    <strong><?= h(php_uname('m')) ?></strong>
+  </div>
+  <div class="manager-install-options">
+    <div class="manager-method">
+      <h3>1. Known official downloads</h3>
+      <p class="hint">Latest official JRE for this NAS. The worker resolves its current upstream download link and SHA-256.</p>
+      <form method="post">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="catalog">
+        <label>Temurin release
+          <select name="major">
+            <option value="25">Temurin 25 LTS — latest Minecraft</option>
+            <option value="21" selected>Temurin 21 LTS — Minecraft 1.20.5–1.21.x</option>
+            <option value="17">Temurin 17 LTS — older Java servers</option>
+          </select>
+        </label>
+        <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+      </form>
+      <p class="hint">Source: <a href="https://adoptium.net/temurin/releases/" target="_blank" rel="noopener noreferrer">Eclipse Adoptium</a>.</p>
+    </div>
+    <div class="manager-method">
+      <h3>2. Download by URL</h3>
+      <p class="hint">Paste an official Adoptium Temurin release URL. The archive must match the current verified release for the selected Java version and architecture.</p>
+      <form method="post">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="url">
+        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
+        <label>Official HTTPS archive URL <input name="url" type="url" required maxlength="1500" placeholder="https://github.com/adoptium/temurin21-binaries/releases/..."></label>
+        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+      </form>
+    </div>
+    <div class="manager-method">
+      <h3>3. Upload Java archive</h3>
+      <p class="hint">Upload the matching official Temurin Linux JRE <code>.tar.gz</code> archive. The worker rejects an incorrect CPU architecture or checksum.</p>
+      <form method="post" enctype="multipart/form-data">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="upload">
+        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
+        <label>Temurin archive <input name="java_archive" type="file" accept=".gz,.tgz,.tar.gz" required></label>
+        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Upload and install</button>
+      </form>
+    </div>
+  </div>
+  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both under DSM Web Station → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Container servers use Java inside their image.</p>
 </section>
 
 <?php if ($selectedJob): ?>
-<section class="panel spaced">
-  <div class="panel-title"><h2>Job result</h2><a class="subtle" href="?tab=manager&amp;job=<?= h($requestedJob) ?>">Refresh status</a></div>
+<section class="panel spaced" data-manager-job="<?= h($requestedJob) ?>" data-job-state="<?= h($selectedJob['state']??'queued') ?>">
+  <div class="panel-title"><div><h2>Job result</h2><p class="hint">Automatically refreshes every 3 seconds while queued or running.</p></div><a class="subtle" href="?tab=manager&amp;job=<?= h($requestedJob) ?>">Refresh status</a></div>
   <div class="status-line"><span>Operation</span><strong><?= h($selectedJob['operation']??'') ?></strong></div>
   <div class="status-line"><span>State</span><strong><?= h($selectedJob['state']??'') ?></strong></div>
   <?php if (($selectedJob['state']??'')==='running'): ?>
@@ -45,11 +87,21 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <div class="status-line"><span>Host platform</span><strong><?= h(($s['os']??'').' / '.($s['architecture']??'')) ?></strong></div>
       <div class="status-line"><span>Total RAM</span><strong><?= h(!empty($s['ram_total'])?round($s['ram_total']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
       <div class="status-line"><span>Available RAM</span><strong><?= h(!empty($s['ram_available'])?round($s['ram_available']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
-      <div class="status-line"><span>Docker</span><strong><?= h($s['docker']??'') ?></strong></div>
+      <div class="status-line"><span>Container Manager</span><strong><?= !empty($s['container_manager_installed'])?'Installed':'Not detected' ?></strong></div>
+      <div class="status-line"><span>Docker daemon</span><strong><?= h($s['docker']??'') ?></strong></div>
+      <?php if (isset($s['docker_cli'])): ?>
+        <div class="status-line"><span>Docker CLI executable</span><code><?= h($s['docker_cli']) ?></code></div>
+        <div class="status-line"><span>Docker socket</span><code><?= h($s['docker_socket']??'Unknown') ?></code></div>
+        <div class="status-line"><span>Worker account</span><strong><?= h($s['docker_worker_user']??'Unknown') ?></strong></div>
+      <?php endif; ?>
       <div class="status-line"><span>Persistent native processes</span><strong><?= !empty($s['persistent_native_supported'])?'Supported':'Unavailable — requires Linux setsid -f' ?></strong></div>
       <div class="status-line"><span>Managed storage</span><code><?= h($s['instances_root']??'') ?></code></div>
       <div class="status-line"><span>Available disk</span><strong><?= h(isset($s['free_storage'])?round($s['free_storage']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
     </div>
+    <?php if (!empty($s['docker_error'])): ?><p class="hint">Docker error: <?= h($s['docker_error']) ?></p><?php endif; ?>
+    <?php if (empty($s['container_supported'])): ?>
+      <p class="hint">On DSM 7, Container Manager is Docker. It can be running while the unprivileged mcconfig worker lacks socket access. Check the socket owner/group and worker identity; never make Docker's socket publicly accessible or world-writable. Docker daemon access effectively grants host-level privileges.</p>
+    <?php endif; ?>
     <h3>Detected Java installations</h3>
     <?php foreach (($s['java']??[]) as $java): ?>
       <div class="status-line"><span><?= h($java['path']??'') ?></span><strong>Java <?= h($java['major']??'?') ?></strong></div>
@@ -93,7 +145,8 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
           ? 'Resume server after worker/NAS restart (when supported)'
           : 'No automatic resume requested' ?></p>
       <?php endif; ?>
-      <p><a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Open console</a></p>
+      <p><a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Open console</a>
+      <?php if (plugin_supported($row)): ?> &nbsp; <a class="subtle" href="?tab=plugins&amp;server=<?= h($id) ?>">Manage plugins</a><?php endif; ?></p>
       <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
         <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>
       <?php endif; ?>
@@ -101,7 +154,13 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <p class="muted">CPU <?= h($state['cpu_percent']??'–') ?><?= isset($state['cpu_percent']) && is_numeric($state['cpu_percent'])?'%':'' ?> · RAM <?= h($state['memory']??(isset($state['memory_mib'])?$state['memory_mib'].' MiB':'Unavailable')) ?></p>
       <?php endif; ?>
       <?php if (($row['install_state']??'')==='failed'): ?>
-        <p class="hint">Provisioning failed. Review the job error. Unregister this entry in Settings; incomplete files may need manual inspection.</p>
+        <p class="hint">Provisioning failed. Review the job error, install a compatible Java runtime if needed, then create a new server. Partial files or containers may require manual inspection.</p>
+        <form method="post" class="inline-form" data-confirm="Unregister this failed server? Partial files or containers will be preserved for inspection.">
+          <?php hidden_csrf(); ?>
+          <input type="hidden" name="action" value="manager_unregister_failed">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <button class="subtle danger-text">Unregister failed entry (keep files)</button>
+        </form>
       <?php elseif (!$pending && $workerOnline): ?>
       <form method="post" class="inline-form">
         <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">

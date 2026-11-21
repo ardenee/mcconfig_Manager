@@ -52,3 +52,18 @@ function worker_reconcile_restore_swaps(): int {
     }
     return $recovered;
 }
+
+/** Remove only stale, closed, unreferenced uploads after the queue's one-hour validity window. */
+function worker_purge_stale_uploads(): int {
+    $dir=manager_base().'/uploads';
+    if (!is_dir($dir)) return 0;
+    $removed=0;
+    foreach(glob($dir.'/*.bin')?:[] as $path) {
+        if (!preg_match('/^[a-f0-9]{24}\.bin$/D',basename($path)) ||
+            !is_file($path) || is_link($path)) continue;
+        $mtime=@filemtime($path);
+        if ($mtime===false || time()-$mtime<10800) continue;
+        if (@unlink($path)) $removed++;
+    }
+    return $removed;
+}

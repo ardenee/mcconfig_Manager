@@ -5,6 +5,9 @@ if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
 require dirname(__DIR__).'/src/App.php';
 require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
+require dirname(__DIR__).'/src/Uploads.php';
+require dirname(__DIR__).'/src/Plugins.php';
+require __DIR__.'/Plugins.php';
 require __DIR__.'/Status.php';
 require dirname(__DIR__).'/src/Console.php';
 require __DIR__.'/Console.php';
@@ -286,14 +289,41 @@ function worker_diagnostics(): array {
     foreach(['/var/packages/Java8/target/j2sdk-image/bin/java','/usr/local/java/bin/java','/opt/jdk-25/bin/java'] as $j) {
         if (is_file($j)&&is_executable($j)&&$j!==$binary) $javas[]=worker_java_version($j);
     }
-    $docker=worker_bin('docker');$dockerStatus='not installed';
+    $docker=worker_bin('docker');
+    $socket='/var/run/docker.sock';
+    $socketStat=@stat($socket);
+    $workerUid=function_exists('posix_geteuid')?posix_geteuid():null;
+    $workerUser=($workerUid!==null && function_exists('posix_getpwuid'))
+        ?(posix_getpwuid($workerUid)['name']??(string)$workerUid):'unknown';
+    $owner=is_array($socketStat)?(int)$socketStat['uid']:-1;
+    $group=is_array($socketStat)?(int)$socketStat['gid']:-1;
+    $ownerName=$owner>=0&&function_exists('posix_getpwuid')?(posix_getpwuid($owner)['name']??(string)$owner):'?';
+    $groupName=$group>=0&&function_exists('posix_getgrgid')?(posix_getgrgid($group)['name']??(string)$group):'?';
+    $sockDetails=is_array($socketStat)?
+        ($socket.' '.$ownerName.':'.$groupName.' '.sprintf('%04o',(int)$socketStat['mode']&0777)):
+        'Socket missing: '.$socket;
+    $dockerStatus=$docker?'Docker CLI detected; checking daemon':'Docker CLI unavailable';
+    $dockerError='';
     if ($docker) {
-        [$code,$out]=worker_exec([$docker,'version','--format','{{.Server.Version}}'],512);
-        $dockerStatus=$code===0?'available: '.$out:'not authorized or daemon unavailable';
+        [$code,$out]=worker_exec([$docker,'version','--format','{{.Server.Version}}'],1000);
+        if ($code===0) $dockerStatus='available: '.$out;
+        elseif (stripos($out,'permission denied')!==false) {
+            $dockerStatus='Permission denied to Container Manager Docker socket';
+            $dockerError=$out;
+        } elseif (!is_array($socketStat)) {
+            $dockerStatus='Docker daemon socket unavailable';
+            $dockerError=$out;
+        } else {
+            $dockerStatus='Docker CLI cannot connect to its daemon';
+            $dockerError=$out;
+        }
     }
     return ['php'=>PHP_VERSION,'os'=>PHP_OS_FAMILY,'architecture'=>php_uname('m'),
       'ram_total'=>$ramTotal,'ram_available'=>$ramFree,'free_storage'=>disk_free_space(worker_root()),
       'java'=>$javas,'docker'=>$dockerStatus,'instances_root'=>worker_root(),
+      'docker_cli'=>$docker??'not found','docker_socket'=>$sockDetails,
+      'docker_worker_user'=>$workerUser,'docker_error'=>substr($dockerError,0,500),
+      'container_manager_installed'=>is_dir('/var/packages/ContainerManager'),
       'container_supported'=>$docker && str_starts_with($dockerStatus,'available'),
       'native_supported'=>true,
       'persistent_native_supported'=>PHP_OS_FAMILY==='Linux' && worker_bin('setsid')!==null];
@@ -331,6 +361,18 @@ function worker_install(string $id,array $post,array &$native): array {
         if ((string)($server[$k]??'')!==(string)$opts[$k]) throw new RuntimeException('Installation request does not match registered server.');
     }
     worker_progress(10,'Checking NAS compatibility and preparing server storage');
+    // Do not create an incomplete world directory if the required Java runtime
+    // is absent. Preflight JRE architecture/version before provisioning storage.
+    $artifact=null;
+    if ($opts['deployment']==='native') {
+        $artifact=worker_latest($opts['software'],$opts['version']);
+        $java=worker_choose_java((string)$artifact['version']);
+        $runtime=worker_java_version($java);
+        $min=(int)($artifact['java_major']??worker_required_java((string)$artifact['version']));
+        if ($min===0 || $runtime['major']<$min) {
+            throw new RuntimeException('No compatible Java runtime installed. The selected Minecraft version requires Java '.$min.'. Install official Temurin in Server Manager first.');
+        }
+    }
     $root=worker_root();
     $path=$root.DIRECTORY_SEPARATOR.$id;
     if (file_exists($path) || is_link($path)) throw new RuntimeException('Server directory already exists.');
@@ -350,12 +392,7 @@ function worker_install(string $id,array $post,array &$native): array {
             worker_progress(80,'Starting Minecraft container');
             worker_docker_run($id,$path,$meta,$meta['image']);
         } else {
-            $artifact=worker_latest($opts['software'],$opts['version']);
-            $java=worker_choose_java((string)$artifact['version']);
-            $runtime=worker_java_version($java);
-            $min=(int)($artifact['java_major']??worker_required_java((string)$artifact['version']));
-            if ($min>0 && $runtime['major']<$min) throw new RuntimeException("Java $min or newer is needed; current runtime: Java ".$runtime['major']);
-            if ($min===0) throw new RuntimeException('Unable to establish Java compatibility for this Minecraft version.');
+            if (!is_array($artifact)) throw new RuntimeException('Java server metadata was not resolved.');
             worker_download($artifact,$path.'/server.jar');
             $meta['version']=$artifact['version'];$meta['build']=$artifact['build'];
             file_put_contents($path.'/eula.txt',"# Accepted by administrator through mcmanager\neula=true\n");
@@ -593,7 +630,7 @@ function worker_safe_remove(string $dir,string $id): void {
 function worker_run_operation(string $op,string $id,array $params,array &$native): array {
     if ($op==='diagnostics') return ['system'=>worker_diagnostics()];
     if ($op==='discover') return ['found'=>worker_discover()];
-    if ($op==='install_java') return ['runtime'=>worker_install_java((int)($params['major']??0))];
+    if ($op==='install_java') return ['runtime'=>worker_install_java((int)($params['major']??0),$params)];
     if ($op==='install') return worker_install($id,$params,$native);
     $row=worker_server($id);
     if ($op==='adopt') {
@@ -614,6 +651,9 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
     }
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
+    if ($op==='install_plugin' || $op==='remove_plugin') {
+        return worker_plugin_apply($op,$id,$row,$meta,$params,$state);
+    }
     if ($op==='verify_backup') {
         return ['backup'=>worker_backup_verify($id,(string)($params['backup_name']??''),true),
             'message'=>'Backup integrity verified; every file passed SHA-256 validation'];
@@ -865,12 +905,17 @@ function worker_main(array $argv): int {
     worker_reconcile_interrupted_jobs();
     $lastRefresh=0;
     $lastRecovery=0;
+    $lastUploadCleanup=0;
     do {
         try {
             worker_touch_heartbeat();
             if (time()-$lastRefresh>=10) {
                 worker_refresh($native);
                 $lastRefresh=time();
+            }
+            if (time()-$lastUploadCleanup>=600) {
+                worker_purge_stale_uploads();
+                $lastUploadCleanup=time();
             }
             if ($mode==='serve' && time()-$lastRecovery>=30) {
                 supervisor_recover_desired();
