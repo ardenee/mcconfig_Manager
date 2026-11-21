@@ -59,9 +59,48 @@ $pluginWorker=manager_online();
   <?php else: ?>
     <p class="hint">Stop the Minecraft server before installing or removing plugins, then start it to apply changes. Plugin JARs execute third-party Java code with the Minecraft server's permissions. Only use trusted publishers; mcmanager cannot guarantee that a plugin is safe or compatible.</p>
     <?php if (!$pluginWorker): ?><div class="alert warning">The management worker is offline. Plugin operations are unavailable.</div><?php endif; ?>
-    <h3>Installed plugin files</h3>
-    <?php $plugins=plugin_inventory($server); ?>
-    <?php if (!$plugins): ?><p class="muted">No plugin JARs found in the server's plugins directory.</p><?php endif; ?>
+    <?php $packages=plugin_packages($selected);$managed=plugin_managed_filenames($selected); ?>
+    <h3>Installed plugin packages</h3>
+    <?php if (!$packages): ?><p class="muted">No mcmanager-tracked packages installed yet. Existing JARs appear below as unmanaged.</p><?php endif; ?>
+    <?php foreach($packages as $package): ?>
+      <div class="mc-plugin-package">
+        <div class="mc-plugin-package-summary">
+          <div>
+            <strong><?= h($package['filename']??'Plugin package') ?></strong>
+            <small><?= count($package['files']) ?> tracked file(s) · <?= h($package['state']??'installed') ?> · <?= h(date('Y-m-d H:i',(int)($package['created']??time()))) ?></small>
+          </div>
+          <form method="post" data-confirm="Uninstall the tracked files for <?= h($package['filename']??'this package') ?> from this stopped server? Unchanged files are archived privately; modified files are preserved.">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="plugin_remove">
+            <input type="hidden" name="server_id" value="<?= h($selected) ?>">
+            <input type="hidden" name="package_id" value="<?= h($package['id']) ?>">
+            <button class="subtle danger-text" <?= !$pluginWorker?'disabled':'' ?>>Uninstall package</button>
+          </form>
+        </div>
+        <details>
+          <summary>Show installed files (<?= count($package['files']) ?>)</summary>
+          <ul class="mc-plugin-file-list">
+            <?php foreach($package['files'] as $relative=>$info): ?>
+              <li><code><?= h($relative) ?></code></li>
+            <?php endforeach; ?>
+          </ul>
+        </details>
+        <?php if (!empty($package['preserved_modified'])): ?>
+          <p class="hint">Modified files left in place: <?= h(implode(', ',array_slice($package['preserved_modified'],0,10))) ?>. These files may contain plugin settings you want to keep.</p>
+          <form method="post" data-confirm="Also remove altered files recorded in this package manifest? A private recovery copy is retained. Only proceed if you no longer need those plugin settings.">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="plugin_remove">
+            <input type="hidden" name="server_id" value="<?= h($selected) ?>">
+            <input type="hidden" name="package_id" value="<?= h($package['id']) ?>">
+            <input type="hidden" name="remove_modified" value="1">
+            <button class="subtle danger-text" <?= !$pluginWorker?'disabled':'' ?>>Remove changed tracked files too</button>
+          </form>
+        <?php endif; ?>
+      </div>
+    <?php endforeach; ?>
+    <h3 class="spaced">Unmanaged plugin JAR files</h3>
+    <?php $plugins=array_values(array_filter(plugin_inventory($server),fn($item)=>!isset($managed[$item['name']]))); ?>
+    <?php if (!$plugins): ?><p class="muted">No unmanaged plugin JARs found.</p><?php endif; ?>
     <?php foreach($plugins as $plugin): ?>
       <div class="status-line">
         <span><strong><?= h($plugin['name']) ?></strong>
@@ -77,36 +116,36 @@ $pluginWorker=manager_online();
     <?php endforeach; ?>
     <div class="manager-install-options">
       <div class="manager-method">
-        <h3>Install plugin from file</h3>
+        <h3>Install plugin JAR or ZIP package</h3>
         <form method="post" enctype="multipart/form-data">
           <?php hidden_csrf(); ?>
           <input type="hidden" name="action" value="plugin_upload">
           <input type="hidden" name="server_id" value="<?= h($selected) ?>">
-          <label>Plugin JAR
+          <label>Plugin JAR / ZIP
               <div class="mc-plugin-dropzone" data-plugin-dropzone tabindex="0">
-                <strong>Drop plugin .jar here</strong><small>or choose a file</small>
-                <input type="file" name="plugin_jar" accept=".jar" required data-plugin-file>
+                <strong>Drop plugin .jar or .zip here</strong><small>or choose a file</small>
+                <input type="file" name="plugin_jar" accept=".jar,.zip" required data-plugin-file>
                 <small data-plugin-filename>No file selected</small>
               </div>
             </label>
           <button type="submit" class="primary" <?= !$pluginWorker?'disabled':'' ?>>Upload and install</button>
         </form>
-        <p class="hint">Upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?>, request <?= h(ini_get('post_max_size')) ?>. The JAR must contain <code>plugin.yml</code> or <code>paper-plugin.yml</code>.</p>
+        <p class="hint">Upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?>, request <?= h(ini_get('post_max_size')) ?>. A ZIP must contain a valid plugin JAR. All extracted files are tracked by package; unsafe archive paths are rejected.</p>
       </div>
       <div class="manager-method">
         <h3>Install plugin from URL</h3>
-        <p class="hint">Use a direct HTTPS JAR download from Modrinth's CDN and its published SHA-256 checksum.</p>
+        <p class="hint">Use a direct HTTPS JAR or ZIP package download from Modrinth's CDN with its published SHA-256 checksum.</p>
         <form method="post">
           <?php hidden_csrf(); ?>
           <input type="hidden" name="action" value="plugin_url">
           <input type="hidden" name="server_id" value="<?= h($selected) ?>">
-          <label>Save as (JAR filename) <input name="filename" required maxlength="116" placeholder="ExamplePlugin.jar"></label>
+          <label>Package filename <input name="filename" required maxlength="116" placeholder="ExamplePlugin.jar or ExamplePlugin.zip"></label>
           <label>Direct Modrinth CDN URL <input name="url" type="url" maxlength="1200" required placeholder="https://cdn.modrinth.com/data/.../plugin.jar"></label>
           <label>SHA-256 checksum <input name="sha256" maxlength="64" minlength="64" pattern="[0-9a-fA-F]{64}" required></label>
           <button type="submit" class="subtle" <?= !$pluginWorker?'disabled':'' ?>>Download and install</button>
         </form>
       </div>
     </div>
-    <p class="hint">Removing a plugin retains its previous JAR in mcmanager's private recovery storage. Plugin-specific config files and world data are deliberately left untouched. Compatibility and dependencies are not automatically resolved.</p>
+    <p class="hint">Each newly installed JAR or extracted ZIP package has a signed, private file manifest. Uninstall removes only files owned by that package and keeps recoverable copies. Any files changed since installation are preserved unless explicitly included. Files created later by Minecraft/plugins, and worlds, remain untouched. Version compatibility and dependencies are not resolved automatically.</p>
   <?php endif; ?>
 </section>

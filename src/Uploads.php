@@ -15,8 +15,10 @@ function manager_upload_file(array $upload,string $kind): array {
         if (!preg_match('/^[a-zA-Z0-9_.+-]{1,160}\.(?:tar\.gz|tgz)$/iD',$filename)) {
             throw new InvalidArgumentException('Choose a Temurin Linux JRE tar.gz archive.');
         }
-    } elseif (!preg_match('/^[A-Za-z0-9_.-]{1,112}\.jar$/iD',$filename)) {
-        throw new InvalidArgumentException('Choose a Minecraft plugin JAR file.');
+    } elseif ($kind==='plugin' && !preg_match('/^[A-Za-z0-9_.-]{1,112}\.(?:jar|zip)$/iD',$filename)) {
+        throw new InvalidArgumentException('Choose a plugin JAR or ZIP package.');
+    } elseif ($kind==='server_jar' && !preg_match('/^[A-Za-z0-9_.-]{1,112}\.jar$/iD',$filename)) {
+        throw new InvalidArgumentException('Choose a Minecraft server JAR file.');
     }
     manager_initialize();
     $base=manager_base().'/uploads';

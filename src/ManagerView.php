@@ -1,6 +1,8 @@
 <?php
 $workerInfo=manager_heartbeat();
 $workerOnline=!empty($workerInfo['online']);
+$dockerAccess=manager_docker_capability();
+$dockerAvailable=!empty($dockerAccess['available']);
 $recent=manager_recent_jobs();
 $requestedJob=$_GET['job']??'';
 $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$requestedJob)
@@ -262,21 +264,35 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
+  <?php if (!$dockerAvailable): ?>
+    <div class="mc-docker-warning alert warning">
+      <strong>Container installation unavailable</strong>
+      <p><?= h($dockerAccess['message']) ?></p>
+      <p class="hint">Java Vanilla/Paper can be installed natively without Docker. Bedrock and other container implementations require the mcconfig worker to connect to Docker. Installing a container manually will not permit mcmanager to control it without the same access. The package does not change Docker's privileged socket permissions automatically.</p>
+      <details><summary>How to enable Container Manager integration</summary>
+        <p>On the NAS, an administrator must grant the mcconfig <em>service user</em> access to Container Manager's Docker socket through a restricted membership/ownership arrangement and arrange for that access to survive DSM service restarts. Docker socket access is equivalent to full NAS administration. Never use <code>chmod 666</code>, or expose the daemon over an unauthenticated network port.</p>
+        <p>First check <code>ls -l /var/run/docker.sock</code> and the service identity with <code>id mcconfig</code> (or the actual worker username shown below). An administrator can test access with <code>sudo -u &lt;worker-user&gt; docker version</code>. Then restart the mcconfig package and refresh its status. Do not guess at group ownership: inspect the socket first.</p>
+        <?php if (!empty($dockerAccess['user'])): ?><p class="hint">Worker: <code><?= h($dockerAccess['user']) ?></code> · Socket: <code><?= h($dockerAccess['socket']??'unknown') ?></code></p><?php endif; ?>
+      </details>
+    </div>
+  <?php endif; ?>
   <form method="post" class="manager-install">
     <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install">
     <div class="form-row">
       <label>Server name <input name="name" placeholder="Family server" maxlength="64" required></label>
-      <label>Edition <select name="edition"><option value="java">Java Edition</option><option value="bedrock">Bedrock Edition</option></select></label>
+      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($dockerAvailable): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
       <label>Software <select name="software">
         <option value="paper">Paper (Java)</option><option value="vanilla">Vanilla (Java)</option>
+        <?php if ($dockerAvailable): ?>
         <option value="spigot">Spigot (container)</option><option value="bukkit">CraftBukkit (container)</option>
         <option value="fabric">Fabric (container)</option><option value="forge">Forge (container)</option>
         <option value="neoforge">NeoForge (container)</option><option value="purpur">Purpur (container)</option>
         <option value="folia">Folia (container)</option><option value="bedrock">Bedrock Dedicated Server</option>
+        <?php endif; ?>
       </select></label>
-      <label>Installation <select name="deployment"><option value="native">Native Java server</option><option value="container">Container Manager / Docker</option></select></label>
+      <label>Installation <select name="deployment"><option value="native">Native Java server</option><?php if ($dockerAvailable): ?><option value="container">Container Manager / Docker</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
       <label>Version <input name="version" value="latest" maxlength="48" placeholder="latest or e.g. 26.2"></label>
@@ -300,7 +316,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
-  <p class="hint">Native managed installation currently supports Java Vanilla and Paper. Containers support the listed Java software or Bedrock, subject to NAS architecture and installed Container Manager. No host Java packages are modified.</p>
+  <p class="hint">Native managed installation supports Java Vanilla and Paper. <?php if ($dockerAvailable): ?>Containers can also be installed and adopted with validated Docker access.<?php else: ?>Container/Bedrock deployment is hidden until the worker has verified Docker access.<?php endif; ?> No host Java packages are modified.</p>
 </section>
 
 </details>

@@ -10,7 +10,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.sidebar nav a').forEach(el => el.addEventListener('click', () => document.body.classList.remove('show-sidebar')));
   document.getElementById('property-search')?.addEventListener('input', event => {
     const value = event.target.value.toLowerCase().trim();
-    document.querySelectorAll('[data-property]').forEach(el => { el.hidden = !el.dataset.property.includes(value); });
+    let visible = 0;
+    document.querySelectorAll('[data-property]').forEach(el => {
+      el.hidden = !el.dataset.property.includes(value);
+      if (!el.hidden) visible++;
+    });
+    const count = document.querySelector('[data-property-count]');
+    if (count) count.textContent = String(visible);
   });
 });
 
@@ -223,8 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
       event.preventDefault();
       zone.classList.remove('is-dragover');
       const file = event.dataTransfer?.files?.[0];
-      if (!file || !/\.jar$/i.test(file.name)) {
-        if (label) label.textContent = 'Choose a Minecraft plugin .jar file';
+      if (!file || !/\.(?:jar|zip)$/i.test(file.name)) {
+        if (label) label.textContent = 'Choose a Minecraft plugin .jar or .zip archive';
         return;
       }
       try {
@@ -243,4 +249,53 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
   });
+});
+
+
+// Keep edition, server implementation and deployment consistent in Create Server.
+// A Bedrock selection always requires the Docker container deployment.
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form.manager-install');
+  if (!form) return;
+  const edition = form.querySelector('select[name="edition"]');
+  const software = form.querySelector('select[name="software"]');
+  const deployment = form.querySelector('select[name="deployment"]');
+  const port = form.querySelector('input[name="port"]');
+  const native = form.querySelector('.manager-install-launch');
+  if (!edition || !software || !deployment) return;
+  let updating = false;
+  const sync = changed => {
+    if (updating) return;
+    updating = true;
+    try {
+      if (changed === 'edition' && edition.value === 'bedrock') {
+        if (software.querySelector('option[value="bedrock"]')) software.value = 'bedrock';
+        if (deployment.querySelector('option[value="container"]')) deployment.value = 'container';
+        if (port && port.value === '25565') port.value = '19132';
+      } else if (changed === 'edition' && edition.value === 'java') {
+        if (software.value === 'bedrock') software.value = 'paper';
+        if (port && port.value === '19132') port.value = '25565';
+      } else if (changed === 'software') {
+        if (software.value === 'bedrock') {
+          edition.value = 'bedrock';
+          if (deployment.querySelector('option[value="container"]')) deployment.value = 'container';
+          if (port && port.value === '25565') port.value = '19132';
+        } else {
+          edition.value = 'java';
+          if (!['paper','vanilla'].includes(software.value)) {
+            if (deployment.querySelector('option[value="container"]')) deployment.value = 'container';
+          }
+        }
+      } else if (changed === 'deployment' && deployment.value === 'native') {
+        edition.value = 'java';
+        if (!['paper','vanilla'].includes(software.value)) software.value = 'paper';
+        if (port && port.value === '19132') port.value = '25565';
+      }
+      if (native) native.hidden = deployment.value !== 'native' || edition.value !== 'java';
+    } finally { updating = false; }
+  };
+  edition.addEventListener('change', () => sync('edition'));
+  software.addEventListener('change', () => sync('software'));
+  deployment.addEventListener('change', () => sync('deployment'));
+  sync('init');
 });
