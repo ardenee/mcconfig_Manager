@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+# Persistent configuration remains available for a later reinstall.
+exit 0

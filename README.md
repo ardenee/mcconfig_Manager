@@ -1,29 +1,60 @@
-# mcconfig for Synology - historical source
+# mcconfig
 
-Recovered from the original mcconfig 0.1 and 0.2 Synology SPK packages published on arden.ie (2014). Version 0.2 is the primary working baseline.
+mcconfig is a lightweight PHP web interface for managing Minecraft Java Edition servers whose files are available on the web host. Originally built for Synology NAS, it now runs as a **generic PHP web application**. An optional **Synology DSM 7.2+ package** is built from the same files.
 
-mcconfig is a PHP web interface for managing Minecraft/CraftBukkit servers on historic Synology NAS devices, covering server properties, worlds/maps, logs, operators, bans, whitelists and server version updates.
+## Features
 
-## Layout
+- Responsive administration interface using the original mcconfig artwork.
+- Password-protected administrator account and CSRF-protected changes.
+- Manage multiple local Minecraft, CraftBukkit, Spigot or Paper server directories.
+- Edit all existing server.properties keys, including newer Minecraft options; add new keys without deleting unrelated settings or comments.
+- Operators, whitelist, banned players and banned IPs. Supports modern JSON formats (Minecraft UUIDs required) and legacy text lists.
+- Edit existing Bukkit/Spigot/Paper YAML configuration and EULA text files with file backups.
+- Detect and select worlds, download a world ZIP and import a new world ZIP.
+- View the recent server log without loading an entire large log file.
+- Upload a replacement server JAR after stopping Minecraft; keep a backup of the prior JAR.
+- No database, Node.js, Composer, Java uploader applet, shell execution or external runtime libraries.
 
-- current/source/ : fully extracted v0.2 application, PHP, JavaScript, CSS and assets
-- current/spk/ : v0.2 Synology INFO, original LICENSE, icons and scripts
-- history/v0.1/source/ and history/v0.1/spk/ : fully extracted original v0.1 for comparison
-- ARCHIVE-MANIFEST.json : original SPK hashes, sizes and extraction counts
-- original-spk/ : gitignored, local-only v0.1/v0.2 original SPK archives
+## Requirements
 
-## Compatibility and licences
+- PHP **8.2 or later** with sessions enabled.
+- PHP **zip** extension for world ZIP import/export.
+- Read/write filesystem access for the specific Minecraft server files you want to edit.
+- A private writable storage directory for application configuration.
+- HTTPS and restricted access to the management URL.
 
-This is archival DSM 5-era code, NOT a tested DSM 7/PHP 8.5 release. Before modernisation review filesystem permissions, uploaded content, remote JAR downloads, web authentication, and security.
+mcconfig works with **local or mounted** Minecraft files. Ordinary shared hosting cannot manage Minecraft files hosted on another machine unless those files are made accessible to the PHP host. It does not start or stop the Minecraft process.
 
-Bundled JavaScript frameworks and the Java uploader JAR are historical third-party components with potentially separate licences; no blanket licence has been applied. The original SPK LICENSE remains in each version's spk/ folder.
+## Generic web installation
 
-## Historical site
+Run:
 
-- https://www.arden.ie/2014/04/01/mcconfig-minecraft-config-for-synology-systems/
-- https://www.arden.ie/2014/04/30/mcconfig-version-0-2-ready-for-download/
-- https://www.arden.ie/downloads/
+    python packaging/build.py --format web
 
-## Next work
+Extract the generated mcconfig-web ZIP onto your PHP server, and configure the web server document root to its **public/** directory. Keep **src/** and **var/** outside the public document root. Ensure **var/** is writable by the PHP account, or configure an external directory using the MCCONFIG_DATA_DIR environment variable. The web ZIP does not contain any password or private configuration.
 
-Inventory dependencies and update or replace unsafe libraries; plan modern DSM 7 packaging and test against disposable Minecraft/CraftBukkit installations.
+Open the website, create an administrator password, then use **Settings → Add a Minecraft server**. Enter the absolute path to the server directory containing server.properties. Set the JAR filename if you want manual JAR replacements.
+
+For Apache, the included .htaccess blocks directory listings and requests for additional PHP files in public/. For nginx, set the document root to public/ and ensure only index.php is executable.
+
+## Synology DSM 7.2+
+
+Install **Web Station** and **PHP 8.2** (or a compatible newer PHP package). Build the optional SPK with:
+
+    python packaging/build.py --format spk
+
+Install the generated mcconfig-DSM7 SPK through Package Center → Manual Install. It registers a Web Station **/mcconfig** portal and a PHP profile without using old Init_3rdparty or DSM 5 Apache scripts. The original icon is preserved.
+
+The DSM package stores configuration in /var/packages/mcconfig/var and serves the application from the web_packages directory. For server files under /volume1, /volume2, and so on, ensure that the **mcconfig** PHP service account has the required access. Review the PHP profile's open_basedir paths in Web Station if you use other volumes.
+
+## Limits and precautions
+
+- Configuration and player list changes may require a Minecraft restart or reload.
+- The JAR uploader performs **manual local uploads only**. No downloads from untrusted update URLs.
+- Stop Minecraft before replacing JARs or transferring worlds; world export is not a live consistent snapshot.
+- World ZIP transfers are limited to 512 MiB uploads and 2 GiB uncompressed data. Existing worlds are never overwritten on import.
+- This is a **file manager for supported Minecraft configuration**, not a remote console, service manager or full-featured Minecraft server panel.
+- YAML files are edited as text, not semantically validated.
+- Do not expose the first-run setup page on the public Internet before creating your administrator password.
+
+The historical 2014 DSM 5-era implementation is preserved in earlier Git history, separate from the deployable application.
