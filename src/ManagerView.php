@@ -32,10 +32,12 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 </section>
 
 
+<?php require __DIR__.'/BedrockWizardView.php'; ?>
+
 <details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)?'open':'' ?>>
-  <summary>Experimental: authorize one DSM Container Manager action (no saved credentials)</summary>
+  <summary>Advanced: manual Container Manager actions</summary>
   <p class="hint">Use a DSM administrator account for <strong>one operation only</strong>. Credentials and the temporary DSM session are used in this HTTPS request, then discarded; the adapter attempts DSM logout even when an operation fails. The mcconfig service account keeps its normal restricted permissions.</p>
-  <p class="hint">Check Container Manager visibility, verify a registered container, or authorize Start/Stop. For new Bedrock servers, use the staged <strong>Install a Bedrock Edition server</strong> section below. Each operation requires a fresh approval; no Docker socket permissions are changed.</p>
+  <p class="hint">Check Container Manager visibility, verify a registered container, or authorize Start/Stop. For new Bedrock servers, use the automatic installation wizard above. Each operation requires a fresh approval; no Docker socket permissions are changed.</p>
   <?php if (PHP_OS_FAMILY!=='Linux'): ?>
     <div class="alert warning">DSM authorization is available only when running the web interface on the Synology NAS.</div>
   <?php elseif (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off'): ?>
@@ -87,68 +89,6 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       </details>
     <?php endif; ?>
   <?php endif; ?>
-</details>
-
-<?php $hasBedrock=false;foreach($all as $existingBedrock) {
-    if (is_array($existingBedrock)&&($existingBedrock['edition']??'')==='bedrock') {$hasBedrock=true;break;}
-} ?>
-<details id="mc-create-bedrock" class="mc-feature-group mc-bedrock-install" <?= !$hasBedrock?'open':'' ?>>
-  <summary>Install a Bedrock Edition server — one-time DSM authorization</summary>
-  <p class="hint">Bedrock uses a Container Manager image. This installer needs <strong>no permanent Docker permission</strong> for mcmanager. Each operation requires a new DSM administrator login: (1) check/download the image; (2) create the stopped container; (3) separately authorize Start.</p>
-  <?php if (PHP_OS_FAMILY!=='Linux'): ?>
-    <div class="alert warning">Install the DSM package on your Synology NAS to use this Bedrock installer.</div>
-  <?php elseif (empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off'): ?>
-    <div class="alert warning">Open mcmanager over HTTPS before using temporary administrator authorization.</div>
-  <?php elseif (!extension_loaded('curl')): ?>
-    <div class="alert warning">Enable the PHP curl extension in mcconfig's Web Station PHP profile.</div>
-  <?php elseif (!in_array(strtolower(php_uname('m')),['x86_64','amd64'],true)): ?>
-    <div class="alert warning">The Linux Bedrock Dedicated Server Docker image requires x86-64 hardware. This NAS reports <?= h(php_uname('m')) ?>.</div>
-  <?php else: ?>
-    <div class="mc-bedrock-steps">
-      <div class="mc-bedrock-step">
-        <h3>1. Check or download the Bedrock image</h3>
-        <p class="hint">If the image is missing, authorize a download. It continues within Container Manager after mcmanager logs out. Check its download progress in Container Manager → Image.</p>
-        <form method="post" action="?tab=manager#mc-create-bedrock" autocomplete="off">
-          <?php hidden_csrf(); ?>
-          <input type="hidden" name="action" value="dsm_approve_once">
-          <label>Image operation <select name="dsm_operation">
-              <option value="bedrock-image">Check if Bedrock image is ready (read-only)</option>
-              <option value="bedrock-pull">Download official itzg Bedrock Docker image</option>
-          </select></label>
-          <div class="form-row">
-            <label>DSM administrator username <input name="dsm_account" required autocomplete="off" maxlength="64"></label>
-            <label>Password (this request only) <input name="dsm_password" type="password" required autocomplete="new-password" maxlength="1024"></label>
-            <label>OTP, if enabled <input name="dsm_otp" autocomplete="off" maxlength="8" inputmode="numeric"></label>
-          </div>
-          <button class="subtle" type="submit">Authorize image operation</button>
-        </form>
-      </div>
-      <div class="mc-bedrock-step">
-        <h3>2. Create your Bedrock server</h3>
-        <p class="hint">Requires the downloaded image. Stores worlds under mcmanager's managed Minecraft instances directory. Creates the container in the stopped state; does not affect existing containers or port assignments.</p>
-        <form method="post" action="?tab=manager#mc-create-bedrock" autocomplete="off"
-          data-confirm="Create a new Bedrock container on this NAS using the selected UDP port and managed storage? The image must already be downloaded.">
-          <?php hidden_csrf(); ?>
-          <input type="hidden" name="action" value="dsm_approve_once">
-          <input type="hidden" name="dsm_operation" value="bedrock-create">
-          <div class="form-row">
-            <label>Server name <input name="bedrock_name" required maxlength="64" placeholder="Bedrock server"></label>
-            <label>UDP server port <input name="bedrock_port" type="number" min="1024" max="65535" value="19132" required></label>
-            <label>Memory limit (MiB) <input name="bedrock_memory" type="number" min="512" max="32768" value="2048" required></label>
-          </div>
-          <label class="check"><input type="checkbox" name="bedrock_eula" value="1" required>
-            I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">Minecraft EULA</a>.</label>
-          <div class="form-row">
-            <label>DSM administrator username <input name="dsm_account" required autocomplete="off" maxlength="64"></label>
-            <label>Password (this request only) <input name="dsm_password" type="password" required autocomplete="new-password" maxlength="1024"></label>
-            <label>OTP, if enabled <input name="dsm_otp" autocomplete="off" maxlength="8" inputmode="numeric"></label>
-          </div>
-          <button type="submit" class="primary">Authorize and create Bedrock server</button>
-        </form>
-      </div>
-    </div>
-  <?php endif; ?>
-  <p class="hint">This is experimental DSM 7 Container Manager integration. Container creation uses Synology's undocumented API and must be verified on this NAS. No automatic administrator session or password is retained.</p>
 </details>
 
 <section class="panel spaced" data-manager-servers>
@@ -384,7 +324,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 
 
-<details id="mc-create-server" class="mc-feature-group" <?php if (!$all): ?>open<?php endif; ?>>
+<details id="mc-create-server" class="mc-feature-group">
 <summary>Create a Minecraft server</summary>
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>

@@ -53,7 +53,8 @@ function dsm_bedrock_install_options(array $post): array {
         ['options'=>['min_range'=>512,'max_range'=>32768]]);
     if ($port===false||$memory===false) throw new InvalidArgumentException('Choose a valid Bedrock UDP port and memory limit.');
     if (empty($post['bedrock_eula'])) throw new RuntimeException('Accept the Minecraft EULA before creating the Bedrock server.');
-    $id=bin2hex(random_bytes(6));
+    $requestedId=request_string($post,'bedrock_id',12);
+    $id=$requestedId!==''?console_server_id($requestedId):bin2hex(random_bytes(6));
     $root=manager_instances_root();
     if (!is_dir($root) && !mkdir($root,0700,true) && !is_dir($root)) {
         throw new RuntimeException('Unable to prepare the managed Minecraft instances directory.');
@@ -119,6 +120,30 @@ function dsm_bedrock_api_action(callable $api,string $operation,?array $options)
                 ?'Bedrock image is installed and ready for server creation.'
                 :'Bedrock image is not installed yet. Authorize Download Bedrock image first.'];
     }
+    if ($operation==='bedrock-poll') {
+        $task=(string)($options['task_id']??'');
+        if (!preg_match('/^[A-Za-z0-9_.:@\/-]{1,160}$/D',$task)) {
+            throw new InvalidArgumentException('The image download task is not valid.');
+        }
+        $last=[];
+        // Keep each HTTP request below DSM Web Station's default timeout.
+        for($attempt=0;$attempt<6;$attempt++) {
+            $last=dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Image','version'=>'1','method'=>'pull_status',
+                'task_id'=>json_encode($task,JSON_THROW_ON_ERROR)
+            ]),'Bedrock download status');
+            if (!empty($last['finished'])) break;
+            if ($attempt<5) usleep(2100000);
+        }
+        $finished=!empty($last['finished']);
+        $progress=$last['progress']??$last['percent']??null;
+        $percent=is_numeric($progress)
+            ?max(0,min(100,(int)$progress)):null;
+        // Do not assume "finished" guarantees a usable image.
+        return ['operation'=>'bedrock-poll','finished'=>$finished,'percent'=>$percent,
+            'message'=>$finished?'Download task finished; checking the image.':
+                'Container Manager is downloading the Bedrock image. Progress will update here.'];
+    }
     if ($operation==='bedrock-pull') {
         $check=dsm_bedrock_image_check($api);
         if ($check['ready']) return [
@@ -139,8 +164,8 @@ function dsm_bedrock_api_action(callable $api,string $operation,?array $options)
         if ($task==='' || strlen($task)>160) {
             throw new RuntimeException('Container Manager did not confirm the image download task; inspect the Container Manager Image tab.');
         }
-        return ['operation'=>'bedrock-pull','image_ready'=>false,
-            'message'=>'Bedrock image download started in Container Manager. After it completes, choose Check Bedrock image, then authorize Create Bedrock server.'];
+        return ['operation'=>'bedrock-pull','image_ready'=>false,'task_id'=>$task,
+            'message'=>'Bedrock image download started in Container Manager.'];
     }
     if ($operation!=='bedrock-create'||!is_array($options)) {
         throw new InvalidArgumentException('Unsupported Bedrock DSM operation.');
