@@ -3,6 +3,7 @@ declare(strict_types=1);
 if (PHP_VERSION_ID < 80200) { http_response_code(500); exit('mcconfig requires PHP 8.2 or newer.'); }
 require dirname(__DIR__) . '/src/App.php';
 require dirname(__DIR__) . '/src/Manager.php';
+require dirname(__DIR__) . '/src/Console.php';
 ini_set('session.use_strict_mode', '1');
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -25,7 +26,7 @@ $config = app_config();
 $installed = isset($config['password_hash']) && is_string($config['password_hash']);
 $authenticated = $installed && ($_SESSION['authenticated'] ?? false) === true;
 $tab = request_string($_GET, 'tab', 32);
-$tabs = ['manager'=>'Server Manager', 'overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
+$tabs = ['manager'=>'Server Manager', 'overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'console'=>'Console', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
 if (!isset($tabs[$tab])) $tab = 'overview';
 $message = (string)($_SESSION['flash'] ?? '');
 unset($_SESSION['flash']);
@@ -82,6 +83,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Choose Java 17, 21 or 25.');
             $job=manager_enqueue('install_java',['major'=>$major]);
             redirect('manager','&job='.$job);
+        }
+        if ($action === 'console_send') {
+            if (!manager_online()) throw new RuntimeException('Console is unavailable while the management worker is offline.');
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            if (!isset($config['servers'][$serverId])) throw new InvalidArgumentException('Server is not registered.');
+            if (($config['servers'][$serverId]['install_state']??'ready')!=='ready') throw new RuntimeException('Server is not ready for console commands.');
+            $command=console_command_input(request_string($_POST,'command',500));
+            $job=manager_enqueue('console_command',['command'=>$command],$serverId);
+            $_SESSION['server_id']=$serverId;
+            if (strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))==='xmlhttprequest') {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['job'=>$job,'state'=>'queued'],JSON_THROW_ON_ERROR);
+                exit;
+            }
+            redirect('console','&job='.$job);
         }
         if ($action === 'manager_action') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
@@ -229,6 +245,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = $e->getMessage();
         // Do not expose filesystem details in the login screen.
         if (!$authenticated && $installed && $action !== 'login') $error = 'Please log in.';
+        if ($action==='console_send' && strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))==='xmlhttprequest') {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['error'=>$error],JSON_INVALID_UTF8_SUBSTITUTE);
+            exit;
+        }
     }
 }
 
@@ -268,6 +290,31 @@ if ($authenticated) {
         catch (Throwable $e) { $error = $e->getMessage(); $server = null; }
     }
     if ($server === null && !in_array($tab, ['settings','about','manager'], true)) $tab = 'settings';
+}
+if (($_GET['action']??'')==='console_poll') {
+    if (!$authenticated) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error'=>'Authentication required.']);
+        exit;
+    }
+    try {
+        $consoleId=console_server_id(request_string($_GET,'server_id',64));
+        if (!isset($config['servers'][$consoleId])) throw new InvalidArgumentException('Unknown Minecraft server.');
+        $jobId=request_string($_GET,'job',24);
+        console_subscribe($consoleId);
+        $payload=['online'=>manager_online(),
+            'snapshot'=>console_snapshot($consoleId),
+            'status'=>manager_running_state($consoleId)['state']??'unknown',
+            'job'=>console_recent_job($consoleId,$jobId)];
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode($payload,JSON_INVALID_UTF8_SUBSTITUTE|JSON_THROW_ON_ERROR);
+    } catch (Throwable) {
+        http_response_code(400);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode(['error'=>'Console status unavailable.']);
+    }
+    exit;
 }
 if ($authenticated && $server && ($_GET['action'] ?? '') === 'download_world') {
     try {
@@ -399,7 +446,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
       $worlds = list_worlds($server);
       [$logname, $log] = log_text($server);
     ?>
-    <?php if ($tab === 'overview'): ?>
+    <?php if ($tab === 'console'): ?>
+      <?php require dirname(__DIR__).'/src/ConsoleView.php'; ?>
+    <?php elseif ($tab === 'overview'): ?>
       <div class="metrics"><?php
         stat_card('Configuration', is_file(server_file($server,'server.properties')) ? 'Found' : 'Missing', 'server.properties');
         stat_card('Worlds', (string)count($worlds), 'Detected level.dat folders');

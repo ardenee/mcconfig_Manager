@@ -8,8 +8,8 @@ The generic PHP application is the **primary distribution**. The optional DSM 7.
 
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** adopt existing installations with host-mounted Minecraft data. For new servers, the installer supports native Java **Vanilla and Paper**, or supported Java and Bedrock images through Docker/Container Manager.
-- **Server lifecycle:** start, stop, restart, status, backups and guarded uninstall for managed servers. Imported native processes are read-only unless started under the worker; imported containers require explicit validation and retain external ownership.
-- **Monitoring:** host architecture, RAM, disk, installed Java versions, Docker availability, native/container process status, CPU and memory metrics where supported, and Java/Bedrock local player-count probes.
+- **Server lifecycle:** start, stop, restart, status, backups and guarded uninstall for managed servers. Imported native Java servers can use localhost-only RCON for commands when enabled; imported containers require explicit validation and retain external ownership.
+- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Per-server command input and auto-refreshing output support native supervised stdin, Java container RCON, Bedrock container send-command, and localhost-only RCON for externally started native Java.
 - **Updates:** official Mojang and stable PaperMC version lookup; SHA-verified JAR downloads for native Vanilla/Paper, with backup. Container image refresh and recreation are administrator-initiated and restricted to manager-created containers.
 - **Java management:** detect installed Java and install side-by-side **Eclipse Temurin JRE 17, 21 or 25** on supported Linux hosts; check Minecraft/Java version compatibility. System Java packages are not replaced.
 - **Existing mcconfig features:** edit server.properties preserving comments and other keys, manage Java ops/whitelist/bans (including UUID JSON), Bedrock allowlist and XUID permissions, edit supported Bukkit/Spigot/Paper YAML, import/export worlds, view file logs and upload a JAR.
@@ -28,7 +28,7 @@ Minecraft itself is not bundled.
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.4.0.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.4.1.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Add server** for existing local Minecraft data, or **Server Manager** for discovery/install/lifecycle.
 
@@ -52,8 +52,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.4.0.zip — generic web deployment
-- dist/mcmanager-DSM7-0.4.0.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.4.1.zip — generic web deployment
+- dist/mcmanager-DSM7-0.4.1.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip and zlib. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 
@@ -78,7 +78,8 @@ Bedrock containers use the equivalent host path and, where needed, a separate Be
 - **Managed update is not automatic.** The administrator approves it. Updates may alter plugin/mod/world compatibility; backups and image/JAR checks help but do not guarantee rollback of worlds. Stop servers before consistent backups and software replacement.
 - **Container permissions are powerful.** Do not expose Docker socket access to the PHP web process or give unrestricted root credentials to an HTTP endpoint. Running the CLI worker with Docker access requires an intentional NAS permissions decision.
 - **Monitoring has scope limits.** CPU and RAM counters depend on host OS/permissions. The player count probe requires the local server protocol and port to respond. Container stdout/stderr is still viewed in DSM Container Manager.
-- **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace, cross-host migrations or full RCON console** is currently implemented.
+- **Console is not a system terminal.** It accepts one Minecraft command at a time, never OS commands. Java containers require the itzg image's local RCON helper; Bedrock containers require its send-command helper. For imported native Java, RCON must be configured and reachable via 127.0.0.1. Native Bedrock outside the worker does not expose an equivalent RCON interface. Console output is a bounded recent-log view, not a persistent SSH/TTY session.
+- **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace or cross-host migrations** is currently implemented.
 - **Uninstallation:** by default, managed server data is retained. Optional permanent deletion requires an exact name match and only applies to folders created/owned by mcmanager.
 
 Project repository: https://github.com/ardenee/mcconfig

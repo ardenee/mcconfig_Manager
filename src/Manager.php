@@ -19,7 +19,7 @@ function manager_instances_root(): string {
 }
 function manager_initialize(): void {
     $base = manager_base();
-    foreach ([$base, "$base/queue", "$base/done", "$base/running", "$base/states", "$base/backups"] as $path) {
+    foreach ([$base, "$base/queue", "$base/done", "$base/running", "$base/states", "$base/backups", "$base/console", "$base/console/subscriptions"] as $path) {
         if (!is_dir($path) && !mkdir($path, 0700, true) && !is_dir($path)) {
             throw new RuntimeException('Cannot create private manager queue.');
         }
@@ -42,7 +42,7 @@ function manager_key(): string {
     return $key;
 }
 function manager_sign(array $payload): array {
-    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR);
+    $json = json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_THROW_ON_ERROR);
     return ['payload'=>$json, 'mac'=>hash_hmac('sha256', $json, manager_key())];
 }
 function manager_unpack(string $data): array {
@@ -62,7 +62,7 @@ function manager_job_id(string $value): string {
 }
 function manager_enqueue(string $operation, array $params = [], string $serverId = ''): string {
     $allowed = ['diagnostics', 'discover', 'install', 'adopt', 'status', 'check_updates', 'start',
-        'stop', 'restart', 'backup', 'update', 'uninstall', 'install_java'];
+        'stop', 'restart', 'backup', 'update', 'uninstall', 'install_java', 'console_command'];
     if (!in_array($operation, $allowed, true)) throw new InvalidArgumentException('Unknown manager operation.');
     if ($serverId !== '' && !preg_match('/^[a-f0-9]{12}$/D', $serverId)) throw new InvalidArgumentException('Invalid server ID.');
     $id = bin2hex(random_bytes(12));

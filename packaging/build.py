@@ -21,7 +21,9 @@ EXTENSIONS = {".php", ".js", ".css", ".png", ".htaccess"}
 REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js",
             "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
             "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
+            "src/Console.php", "src/ConsoleView.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
+            "agent/Console.php", "agent/Rcon.php",
             "var/.htaccess", "var/index.php"}
 
 
