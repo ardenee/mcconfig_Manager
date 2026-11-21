@@ -17,7 +17,7 @@
           "profile_desc": "PHP 8.2 profile for mcconfig",
           "backend": 11,
           "open_basedir": "/var/services/web_packages/mcconfig:/var/packages/mcconfig/var:/volume1:/volume2:/volume3:/volume4:/volume5:/volume6:/tmp:/var/services/tmp",
-          "extensions": ["session", "zip", "zlib"],
+          "extensions": ["session", "zip", "zlib", "curl"],
           "php_settings": {
             "upload_max_filesize": "512M",
             "post_max_size": "520M",
