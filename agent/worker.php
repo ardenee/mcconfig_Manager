@@ -8,6 +8,7 @@ require __DIR__.'/JavaRuntime.php';
 require dirname(__DIR__).'/src/Uploads.php';
 require dirname(__DIR__).'/src/Plugins.php';
 require dirname(__DIR__).'/src/ServerJar.php';
+require dirname(__DIR__).'/src/Startup.php';
 require __DIR__.'/Plugins.php';
 require __DIR__.'/ServerJar.php';
 require __DIR__.'/Status.php';
@@ -17,6 +18,7 @@ require __DIR__.'/Rcon.php';
 require __DIR__.'/BackupRestore.php';
 require __DIR__.'/Supervisor.php';
 require __DIR__.'/Recovery.php';
+require __DIR__.'/Startup.php';
 
 function worker_write(string $file,array $value): void {
     $signed=json_encode(manager_sign($value),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
@@ -525,7 +527,7 @@ function worker_native_spawn(string $id,string $path,array $meta,array &$native)
         if ($required>0 && $runtime['major']<$required) throw new RuntimeException("Requires Java $required, found Java ".$runtime['major']);
         $heap=(int)($meta['memory']??2048);
         if ($heap<512 || $heap>32768) throw new RuntimeException('Invalid Java heap.');
-        $cmd=[$java,'-Xms256M','-Xmx'.$heap.'M','-jar',$jar,'nogui'];
+        $cmd=worker_native_java_command($id,$path,$meta,$java,$jar);
     } else {
         if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Bedrock native is only supported on compatible Linux servers.');
         $binary=$path.'/bedrock_server';
@@ -697,6 +699,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             'version'=>$meta['version']??'unknown','build'=>$meta['build']??'',
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
     }
+    if ($op==='configure_startup') return worker_configure_startup($id,$path,$meta,$params);
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
     if ($op==='install_server_jar') return worker_server_jar_install($id,$row,$meta,$params,$state);
     if ($op==='install_plugin' || $op==='remove_plugin') {

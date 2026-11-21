@@ -62,7 +62,7 @@ function manager_job_id(string $value): string {
 }
 function manager_enqueue(string $operation, array $params = [], string $serverId = ''): string {
     $allowed = ['diagnostics', 'discover', 'install', 'adopt', 'status', 'check_updates', 'start',
-        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar'];
+        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar', 'configure_startup'];
     if (!in_array($operation, $allowed, true)) throw new InvalidArgumentException('Unknown manager operation.');
     if ($serverId !== '' && !preg_match('/^[a-f0-9]{12}$/D', $serverId)) throw new InvalidArgumentException('Invalid server ID.');
     $id = bin2hex(random_bytes(12));
@@ -79,7 +79,16 @@ function manager_result(string $id): ?array {
         if (!is_file($file)) continue;
         $data = file_get_contents($file);
         if ($data === false || strlen($data) > 32768) throw new RuntimeException('Invalid manager result.');
-        return manager_unpack($data);
+        $result=manager_unpack($data);
+        // A worker briefly moves the queued signed request to /running
+        // before writing its first progress record. Present that valid
+        // transition as running, never as a terminal empty state.
+        if ($stage==='running' && !isset($result['state'])) {
+            return ['id'=>$id,'operation'=>$result['operation']??'',
+                'server_id'=>$result['server_id']??'','state'=>'running',
+                'message'=>'Worker accepted the request','percent'=>0];
+        }
+        return $result;
     }
     $queued = manager_base() . "/queue/$id.json";
     return is_file($queued) ? ['id'=>$id, 'state'=>'queued', 'message'=>'Waiting for worker'] : null;
@@ -181,7 +190,15 @@ function manager_install_input(array $post): array {
     if ($deployment==='native' && !($edition==='java' && in_array($software,['vanilla','paper'],true))) {
         throw new InvalidArgumentException('Managed native installation currently supports Vanilla and Paper Java. Use a container for other variants.');
     }
-    return compact('name','edition','software','deployment','version','port','memory');
+    $options=compact('name','edition','software','deployment','version','port','memory');
+    if ($deployment==='native' && $edition==='java') {
+        $options=array_merge($options,startup_settings([
+            'memory'=>$memory,'xms'=>$post['xms']??256,
+            'jvm_args'=>$post['jvm_args']??'',
+            'netty_workdir'=>$post['netty_workdir']??'1'
+        ],$memory));
+    }
+    return $options;
 }
 
 function manager_cancel_queued_job(string $id): bool {

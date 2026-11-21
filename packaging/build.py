@@ -22,12 +22,12 @@ REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js
             "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
             "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
             "src/Console.php", "src/ConsoleView.php", "src/Uploads.php",
-            "src/Plugins.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php",
+            "src/Plugins.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php", "src/Startup.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
-            "agent/Console.php", "agent/Rcon.php", "agent/Plugins.php", "agent/ServerJar.php",
+            "agent/Console.php", "agent/Rcon.php", "agent/Plugins.php", "agent/ServerJar.php", "agent/Startup.php",
             "agent/BackupRestore.php", "agent/Recovery.php",
             "agent/Supervisor.php", "agent/native-supervisor.php",
-            "var/.htaccess", "var/index.php"}
+            "var/.htaccess", "var/index.php", "LICENSE"}
 
 
 def web_files() -> dict[str, bytes]:
@@ -51,6 +51,7 @@ def web_files() -> dict[str, bytes]:
             if file.name == "config.php":
                 raise RuntimeError("Private configuration must never ship in a release.")
             result[relative] = file.read_bytes()
+    result["LICENSE"] = (ROOT / "LICENSE").read_bytes()
     if not REQUIRED.issubset(result):
         raise RuntimeError(f"Missing application files: {sorted(REQUIRED - result.keys())}")
     return result
@@ -89,6 +90,9 @@ def png_dimension(data: bytes) -> tuple[int, int]:
 
 
 def validate_dsm() -> None:
+    if not (ROOT / "LICENSE").read_text(encoding="utf-8").startswith("MIT License\n") or \
+            (ROOT / "LICENSE").read_bytes() != (PACK / "LICENSE").read_bytes():
+        raise RuntimeError("Generic and SPK distributions must carry the identical MIT license.")
     info = (PACK / "INFO").read_text(encoding="utf-8")
     if ('package="mcconfig"' not in info or 'install_dep_packages="WebStation:PHP8.2"' not in info
             or 'os_min_ver="7.2-' not in info):

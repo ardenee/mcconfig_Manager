@@ -2,14 +2,16 @@
 
 **mcmanager** is a lightweight Minecraft Java and Bedrock server manager for Synology DSM and other PHP/Linux installations. It retains the original **mcconfig** icon and existing Synology package identifier so installed mcconfig packages can be upgraded in place.
 
-The generic PHP application is the **primary distribution**. The optional DSM 7.2+ SPK bundles the same application together with a PHP CLI management worker. No database or third-party PHP framework is needed.
+The generic PHP application is the **primary distribution**. The optional DSM 7.2+ SPK bundles the same application together with a PHP CLI management worker. No database or third-party PHP framework is needed. Both distributions include the MIT License; the DSM installer displays the same MIT terms.
 
 ## What it does
 
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** adopt existing installations with host-mounted Minecraft data. For new servers, the installer supports native Java **Vanilla and Paper**, or supported Java and Bedrock images through Docker/Container Manager.
+- **Native Java launch settings:** per-server initial and maximum JVM heap (Xms/Xmx), validated optional JVM flags, and a private server-local Netty JNI work directory to avoid Synology systems whose `/tmp` disallows executable libraries. Settings apply on the next start; no running server is interrupted. Newly installed native Java servers can set these at creation. Container memory remains a Docker/container limit.
 - **Server lifecycle:** start, stop, restart, status, guarded uninstall and independent Linux native-server supervision. Native servers can survive a PHP management-worker restart and can recover their saved desired running state after reboot. Imported Java processes can use localhost-only RCON when configured. Imported containers retain external ownership.
-- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Detailed Container Manager/Docker CLI/socket ownership diagnostics help distinguish a running DSM package from actual Docker daemon authorization. Management job results refresh every 3 seconds while queued/running. Per-server console supports supervised native stdin, Java container RCON, Bedrock container send-command and localhost-only RCON for externally started Java.
+- **Server logs:** Minecraft 26.3 may log an idle pause after 60 seconds without players; that is not a process failure. Set `pause-when-empty-seconds=0` in server.properties if the simulation must continue. DSM may omit `/etc/os-release` and `/etc/lsb-release`; the messages alone are not fatal.
+- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Detailed Container Manager/Docker CLI/socket ownership diagnostics help distinguish a running DSM package from actual Docker daemon authorization. Server Manager polls selected job results, queued jobs and historical job entries every 3 seconds (including after completion), shows last synchronization/errors, and labels history separately from current server state. Per-server console supports supervised native stdin, Java container RCON, Bedrock container send-command and localhost-only RCON for externally started Java.
 - **JAR management:** dedicated native-Java destination selector; official Mojang/Paper stable JAR catalog, publisher-checksummed direct HTTPS URLs, and JAR upload; detects Minecraft version from embedded metadata/startup logs and shows typical Java runtime requirement. Replacing the JAR backs up the previous file. Registered existing empty server folders can be initialized with a JAR without implying a full installation until first successful start. Generic web hosting without a worker retains manual uploaded-JAR installation with an explicit stopped-server confirmation, but official downloads require the worker; DSM packages use supervised worker operations.
 - **Updates:** official Mojang and stable PaperMC version lookup; SHA-verified JAR downloads for native Vanilla/Paper, with backup. Container image refresh and recreation are administrator-initiated and restricted to manager-created containers.
 - **Java management:** detect installed Java and install side-by-side Eclipse Temurin JRE **17, 21 or 25** via official latest-release dropdown, official HTTPS archive URL, or manual .tar.gz upload. Every method verifies the upstream SHA-256 and Linux ELF x64/ARM64 architecture. DSM system Java is left untouched.
@@ -31,7 +33,7 @@ Minecraft itself is not bundled.
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.2.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.5.3.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Register an existing Minecraft server** only to attach an existing folder; it does not install Minecraft or create properties. Use **Server Manager > Install a new Minecraft server** to provision a new instance, then install the required Java runtime. The JAR management tab can install a verified native Java server JAR into a registered directory.
 
@@ -55,8 +57,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.5.2.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.2.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.5.3.zip — generic web deployment
+- dist/mcmanager-DSM7-0.5.3.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip and zlib. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 
@@ -84,6 +86,7 @@ Bedrock containers use the equivalent host path and, where needed, a separate Be
 - **Console is not a system terminal.** It accepts one Minecraft command at a time, never OS commands. Java containers require the itzg image's local RCON helper; Bedrock containers require its send-command helper. For imported native Java, RCON must be configured and reachable via 127.0.0.1. Native Bedrock outside the worker does not expose an equivalent RCON interface. Console output is a bounded recent-log view, not a persistent SSH/TTY session.
 - **Minecraft versions:** The version is detected from JAR metadata or startup logs when possible; if unavailable, the registered version is displayed with a source label. The Java compatibility indication is a general Minecraft guide and does not replace checks for modded distributions. An empty registered directory has no installed Minecraft version.
 - **Plugin safety:** Plugin JARs execute arbitrary Java code inside Minecraft, not a sandbox. SHA-256 checks transfer integrity, not whether a plugin author is trustworthy. Plugins are not auto-updated, and dependencies/version compatibility are not automatically resolved. Install or remove plugins only while the server is stopped.
+- **Startup security:** User-configurable JVM arguments are validated against a small allowlist of GC, processor/thread-count and safe `-D` options; they cannot add arbitrary JVM agents, shell commands or executable overrides. Native Netty JNI extraction can be moved to an app-created directory under the server root, provided the storage filesystem permits executable native libraries.
 - **Java source restrictions:** Uploaded/downloaded JREs must match the current official Temurin release for the chosen major and NAS CPU. Unsupported/older archives are refused rather than installed without verified publisher metadata.
 - **Docker access:** Synology Container Manager is the Docker package, but the mcconfig package account does not automatically have permission to access its daemon. Diagnostics show the CLI, socket ownership and worker identity. Granting Docker socket access is effectively host administration and is not automatically changed by the installer.
 - **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace or cross-host migrations** is currently implemented.

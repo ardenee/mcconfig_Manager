@@ -73,7 +73,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 <?php if ($selectedJob): ?>
 <section class="panel spaced" data-manager-job="<?= h($requestedJob) ?>" data-job-state="<?= h($selectedJob['state']??'queued') ?>">
-  <div class="panel-title"><div><h2>Job result</h2><p class="hint">Automatically refreshes every 3 seconds while queued or running.</p></div><a class="subtle" href="?tab=manager&amp;job=<?= h($requestedJob) ?>">Refresh status</a></div>
+  <div class="panel-title"><div><h2>Job result</h2><p class="hint">Automatically checks every 3 seconds, including after completion. <span data-manager-sync aria-live="polite">Connecting…</span></p></div><a class="subtle" href="?tab=manager&amp;job=<?= h($requestedJob) ?>">Refresh status</a></div>
   <div class="status-line"><span>Operation</span><strong><?= h($selectedJob['operation']??'') ?></strong></div>
   <div class="status-line"><span>State</span><strong><?= h($selectedJob['state']??'') ?></strong></div>
   <?php if (($selectedJob['state']??'')==='running'): ?>
@@ -180,6 +180,34 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
         <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
       </form>
+      <?php if (($row['edition']??'java')==='java' && ($row['deployment']??'native')==='native'): ?>
+      <details class="manager-backups manager-startup">
+        <summary>Startup settings - Java heap and JVM options</summary>
+        <p class="hint">These settings apply on the next server start. A running Minecraft process is not interrupted. Each extra JVM option is passed directly as an argument (not through a shell).</p>
+        <form method="post" class="manager-startup-form">
+          <?php hidden_csrf(); ?>
+          <input type="hidden" name="action" value="manager_startup">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <div class="form-row">
+            <label>Initial heap (Xms), MiB
+              <input name="xms" type="number" min="128" max="32768" required value="<?= h($row['xms']??256) ?>">
+            </label>
+            <label>Maximum heap (Xmx), MiB
+              <input name="memory" type="number" min="512" max="32768" required value="<?= h($row['memory']??2048) ?>">
+            </label>
+          </div>
+          <label>Advanced JVM arguments (one supported flag per line)
+            <textarea name="jvm_args" rows="3" maxlength="1800" placeholder="-XX:+UseG1GC&#10;-XX:MaxGCPauseMillis=200"><?= h($row['jvm_args']??'') ?></textarea>
+          </label>
+          <input type="hidden" name="netty_workdir" value="0">
+          <label class="check"><input type="checkbox" name="netty_workdir" value="1" <?= !array_key_exists('netty_workdir',$row)||!empty($row['netty_workdir'])?'checked':'' ?>>
+            Use a private Netty native-library directory within this server (recommended on DSM when /tmp is noexec)
+          </label>
+          <button class="subtle" type="submit">Save startup settings</button>
+        </form>
+        <p class="hint">Supported extra flags include G1GC, MaxGCPauseMillis, processor/thread counts, AlwaysPreTouch, encoding and timezone. Heap is configured above; JVM agents, classpath changes and shell commands are not accepted. For the "Server empty ... pausing" message, change <code>pause-when-empty-seconds</code> in Server Properties instead.</p>
+      </details>
+      <?php endif; ?>
       <details class="manager-backups">
         <summary>Backups and restoration (<?= count(manager_backup_files((string)$id)) ?> snapshots)</summary>
         <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders. Synology ACLs are not preserved; externally owned/imported folders may require manual permission repair. Older TAR archives are retained but not restored directly.</p>
@@ -254,8 +282,18 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <div class="form-row">
       <label>Version <input name="version" value="latest" maxlength="48" placeholder="latest or e.g. 26.2"></label>
       <label>Port <input name="port" type="number" min="1024" max="65535" value="25565" required></label>
-      <label>Memory limit (MiB) <input name="memory" type="number" min="512" max="32768" value="2048" required></label>
+      <label>Maximum heap / memory (MiB) <input name="memory" type="number" min="512" max="32768" value="2048" required></label>
     </div>
+    <details class="manager-install-launch">
+      <summary>Optional native Java startup arguments</summary>
+      <p class="hint">For native Java servers only. Container memory is a container limit set at creation.</p>
+      <label>Initial Java heap (Xms), MiB <input name="xms" type="number" min="128" max="32768" value="256"></label>
+      <label>Advanced JVM flags (one supported flag per line)
+        <textarea name="jvm_args" rows="3" maxlength="1800" placeholder="-XX:+UseG1GC&#10;-XX:MaxGCPauseMillis=200"></textarea>
+      </label>
+      <input type="hidden" name="netty_workdir" value="0">
+      <label class="check"><input type="checkbox" name="netty_workdir" value="1" checked> Use server-local Netty native-library directory (recommended for DSM noexec /tmp)</label>
+    </details>
     <label class="check"><input name="eula" type="checkbox" value="1" required>
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
@@ -263,7 +301,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <p class="hint">Native managed installation currently supports Java Vanilla and Paper. Containers support the listed Java software or Bedrock, subject to NAS architecture and installed Container Manager. No host Java packages are modified.</p>
 </section>
 
-<section class="panel spaced">
+<section class="panel spaced" data-manager-queued>
   <div class="panel-title"><h2>Queued management jobs</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
   <?php $queued=manager_queued_jobs(); ?>
   <?php if (!$queued): ?><p class="muted">No pending jobs.</p><?php endif; ?>
@@ -280,7 +318,8 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <p class="hint">Running tasks cannot be force-cancelled: terminating a backup, restore, update or server installation mid-operation can damage files.</p>
 </section>
 
-<section class="panel spaced"><div class="panel-title"><h2>Recent management jobs</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
+<section class="panel spaced" data-manager-recent><div class="panel-title"><h2>Recent management jobs (history)</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
+  <p class="hint">These are past operations, not current server health. Earlier failures remain in the history after a later successful installation. This list updates automatically every 3 seconds. <span data-manager-sync aria-live="polite">Connecting…</span></p>
   <?php if (!$recent): ?><p class="empty">No completed jobs yet.</p><?php endif; ?>
   <?php foreach($recent as $job): ?>
     <div class="status-line"><span><?= h($job['operation']??'') ?> — <?= h($job['message']??$job['result']['message']??'') ?></span>
