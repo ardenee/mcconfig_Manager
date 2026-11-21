@@ -592,8 +592,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.6">
-<script src="assets/app.js?v=0.5.6" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.7">
+<script src="assets/app.js?v=0.5.7" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
@@ -801,23 +801,37 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <?php endforeach; ?></div>
       <?php } ?>
     <?php elseif ($tab === 'files'): ?>
-      <section class="panel"><h2>Additional configuration files</h2><p class="muted">Edit supported <?= is_bedrock($server) ? 'Bedrock JSON' : 'Bukkit, Spigot and Paper configuration' ?> files. Only known filenames are permitted; backups are saved before changes.</p>
-        <div class="file-links"><?php foreach (editable_files($server) as $name=>$label): ?>
-          <a class="subtle <?= ($_GET['file'] ?? '') === $name ? 'selected' : '' ?>" href="?tab=files&amp;file=<?= h(rawurlencode($name)) ?>"><?= h($label) ?></a>
-        <?php endforeach; ?></div>
-        <?php
-          $available = array_keys(editable_files($server));
-          $fileKey = $_GET['file'] ?? $available[0];
-          if (!is_string($fileKey) || !isset(editable_files($server)[$fileKey])) $fileKey = $available[0];
-          try { $body = editable_text($server, $fileKey); $fileError = ''; }
-          catch (Throwable $e) { $fileError = $e->getMessage(); $body = ''; }
-        ?>
-        <?php if ($fileError): ?><div class="alert warning"><?= h($fileError) ?></div><?php else: ?>
-        <form method="post"><?php hidden_csrf(); hidden_server($selected); ?>
-          <input type="hidden" name="action" value="save_text"><input type="hidden" name="file_key" value="<?= h($fileKey) ?>">
-          <label><?= h($fileKey) ?><textarea name="content" class="text-editor" spellcheck="false" rows="22"><?= h($body) ?></textarea></label>
-          <div class="actions"><button class="primary">Save configuration</button><span>Review <?= is_bedrock($server) ? 'JSON' : 'YAML' ?> syntax before saving; raw files are not validated.</span></div>
-        </form><?php endif; ?>
+      <?php
+        $configFiles=editable_existing_files($server);
+        $selectedFile=$_GET['file']??'';
+        if (!is_string($selectedFile)||!array_key_exists($selectedFile,$configFiles)) {
+            $selectedFile=(string)(array_key_first($configFiles)??'');
+        }
+        $serverSoftware=strtolower((string)($server['software']??(is_bedrock($server)?'bedrock':'vanilla')));
+        $configVersion=is_bedrock($server)?(string)($server['version']??''):((string)(jar_detect_version($server)['version']??''));
+      ?>
+      <section class="panel"><h2>Additional configuration files</h2>
+        <p class="muted">Showing existing files for <?= h(ucfirst($serverSoftware)) ?><?= $configVersion!==''?' (Minecraft '.h($configVersion).')':'' ?>. Bukkit, Spigot and Paper files are only relevant to servers running those implementations; legacy Paper and newer Paper config filenames are selected by what the installed server actually generated.</p>
+        <?php if (!$configFiles): ?>
+          <div class="alert warning">No supported additional configuration files found for this server. <?= $serverSoftware==='vanilla'?'Vanilla Minecraft primarily uses server.properties; Bukkit/Paper configuration files do not apply.':'Start the server successfully to generate its configuration files, or check its server directory.' ?></div>
+          <p><a class="subtle" href="?tab=properties&amp;server=<?= h($selected) ?>">Edit server.properties</a></p>
+        <?php else: ?>
+          <div class="file-links"><?php foreach ($configFiles as $name=>$label): ?>
+            <a class="subtle <?= $selectedFile===$name?'selected':'' ?>" href="?tab=files&amp;server=<?= h($selected) ?>&amp;file=<?= h(rawurlencode($name)) ?>"><?= h($label) ?></a>
+          <?php endforeach; ?></div>
+          <?php
+            try { $body=editable_text($server,$selectedFile);$fileError=''; }
+            catch(Throwable $e) { $fileError=$e->getMessage();$body=''; }
+          ?>
+          <?php if ($fileError): ?><div class="alert warning"><?= h($fileError) ?></div><?php else: ?>
+            <form method="post"><?php hidden_csrf();hidden_server($selected); ?>
+              <input type="hidden" name="action" value="save_text">
+              <input type="hidden" name="file_key" value="<?= h($selectedFile) ?>">
+              <label><?= h($selectedFile) ?><textarea name="content" class="text-editor" spellcheck="false" rows="22"><?= h($body) ?></textarea></label>
+              <div class="actions"><button class="primary">Save configuration</button><span>Changes are backed up. Ensure the <?= is_bedrock($server)?'JSON':(str_ends_with($selectedFile,'.txt')?'text':'YAML') ?> syntax is correct before saving.</span></div>
+            </form>
+          <?php endif; ?>
+        <?php endif; ?>
       </section>
     <?php elseif ($tab === 'worlds'): ?>
       <section class="panel"><h2>World directories</h2><p class="muted">Detected using level.dat in the <?= is_bedrock($server) ? 'configured Bedrock worlds directory' : 'server root' ?>. Stop Minecraft before importing or exporting worlds.</p>
