@@ -297,7 +297,27 @@ id <?= h($dockerUser) ?></pre>
             Then reload Server Manager. Container options will appear automatically after a successful permission check.
           </li>
         </ol>
-        <p class="hint"><strong>Security:</strong> Docker socket access grants root-equivalent control over the NAS. mcmanager will never change socket ownership or permissions automatically. Never use <code>chmod 666</code> or an unauthenticated network Docker endpoint. Container Manager/DSM updates can reset socket access; recheck after upgrades.</p>
+        <details class="mc-docker-gui-setup">
+          <summary>Alternative: use the DSM GUI to authorize the change (no password in mcmanager)</summary>
+          <p>In DSM, open <strong>Control Panel → Task Scheduler → Create → Scheduled Task → User-defined script</strong>. Under General, choose <strong>root</strong> as the task user. On Task Settings, paste the administrator-reviewed commands below and run the task manually once. Disable or delete the task afterwards. The <code>mcconfig</code> service user is a package-internal account, so DSM's regular User &amp; Group screen may not expose the membership change.</p>
+          <p class="hint">The following example is for a <strong>new dedicated Docker-socket group</strong>. It never asks for or stores the root password. Review the existing socket ownership and any other software relying on it before changing the group.</p>
+          <pre class="mc-docker-commands">set -eu
+test "$(id -u)" -eq 0
+test -S /var/run/docker.sock
+id <?= h($dockerUser) ?>
+if ! getent group mcmanager-docker >/dev/null 2>&amp;1; then
+  /usr/syno/sbin/synogroup --add mcmanager-docker <?= h($dockerUser) ?>
+fi
+id -nG <?= h($dockerUser) ?> | tr ' ' '\n' | grep -qx mcmanager-docker || {
+  echo "Group exists without the package user; stop and review membership" >&amp;2
+  exit 1
+}
+chgrp mcmanager-docker /var/run/docker.sock
+chmod 0660 /var/run/docker.sock
+ls -l /var/run/docker.sock</pre>
+          <p class="hint">If a group already exists without the service user, stop and review it instead of replacing its membership. After the task completes, restart mcconfig in Package Center and refresh its Docker status. This grants persistent account membership; the socket group ownership can reset after Container Manager restarts. If you need access restricted to each individual Docker action instead, that requires a separate, tightly controlled privileged broker—not a root-password field in the website.</p>
+        </details>
+        <p class="hint"><strong>Security:</strong> Docker socket access grants root-equivalent control over the NAS. mcmanager will never change socket ownership or permissions automatically. Never use <code>chmod 666</code> or an unauthenticated network Docker endpoint. Container Manager/DSM updates can reset socket access; recheck after upgrades. Never enter NAS administrator or root credentials into the mcmanager web form.</p>
         <p class="hint"><a href="https://docs.docker.com/engine/install/linux-postinstall/" target="_blank" rel="noopener noreferrer">Docker documentation: socket group privileges</a></p>
       </details>
       <p class="hint">Native Java Vanilla/Paper is still available. Bedrock and other container types require Docker access even if the container was installed manually.</p>

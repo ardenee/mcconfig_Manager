@@ -302,14 +302,40 @@ function editable_files(?array $server = null): array {
         'allowlist.json'=>'Bedrock allowlist (advanced JSON)',
         'permissions.json'=>'Bedrock permissions (advanced JSON)',
     ];
-    return [
-        'bukkit.yml'=>'Bukkit configuration', 'spigot.yml'=>'Spigot configuration',
-        'paper.yml'=>'Paper configuration (legacy)', 'permissions.yml'=>'Permissions',
-        'commands.yml'=>'Commands', 'help.yml'=>'Help',
-        'config/paper-global.yml'=>'Paper global (modern)',
-        'config/paper-world-defaults.yml'=>'Paper world defaults (modern)',
-        'eula.txt'=>'Minecraft EULA',
-    ];
+    $software=strtolower((string)($server['software']??'vanilla'));
+    $files=['eula.txt'=>'Minecraft EULA'];
+    // Java implementation-specific config files; do not advertise Bukkit/Paper
+    // settings for Vanilla, Fabric, Forge or NeoForge installations.
+    if (in_array($software,['bukkit','spigot','paper','purpur','folia'],true)) {
+        $files+=[
+            'bukkit.yml'=>'Bukkit configuration',
+            'permissions.yml'=>'Bukkit permissions',
+            'commands.yml'=>'Bukkit commands',
+            'help.yml'=>'Bukkit help',
+        ];
+    }
+    if (in_array($software,['spigot','paper','purpur','folia'],true)) {
+        $files['spigot.yml']='Spigot configuration';
+    }
+    if (in_array($software,['paper','purpur','folia'],true)) {
+        $files['paper.yml']='Paper configuration (legacy)';
+        $files['config/paper-global.yml']='Paper global configuration';
+        $files['config/paper-world-defaults.yml']='Paper world defaults';
+    }
+    return $files;
+}
+/** Show only configuration files actually created by this server software. */
+function editable_existing_files(array $server): array {
+    $available=[];
+    foreach(editable_files($server) as $relative=>$label) {
+        try {
+            $path=editable_path($server,$relative);
+            if (is_file($path) && is_readable($path)) {
+                $available[$relative]=$label;
+            }
+        } catch(Throwable) { /* A missing or unsafe file is not editable. */ }
+    }
+    return $available;
 }
 function editable_path(array $server, string $name): string {
     if (!isset(editable_files($server)[$name])) throw new InvalidArgumentException('Configuration file is not allowed.');
