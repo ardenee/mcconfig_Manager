@@ -1,13 +1,33 @@
 <?php
-// Included only for an authenticated administrator and selected Minecraft server.
+// Each plugin operation is tied to this explicitly selected server ID.
+$pluginTargets=[];
+foreach($all as $id=>$row) {
+    if (is_array($row) && plugin_supported($row) &&
+        !in_array(($row['install_state']??'ready'),['pending','failed'],true)) {
+        $pluginTargets[(string)$id]=$row;
+    }
+}
 $enabled=plugin_supported($server);
 $pluginWorker=manager_online();
 ?>
 <section class="panel">
   <div class="panel-title"><div><h2>Server plugins</h2>
-    <p class="muted">Manage Bukkit / Paper-compatible Java plugin JARs for <strong><?= h($server['name']??'this server') ?></strong>.</p></div>
-    <strong><?= $enabled?'Supported':'Not supported' ?></strong>
+    <p class="muted">Select the destination Minecraft server before changing its plugins.</p></div>
+    <strong><?= $enabled?'Compatible server':'Unsupported server' ?></strong>
   </div>
+  <form method="get" class="manager-server-picker" data-server-picker>
+    <input type="hidden" name="tab" value="plugins">
+    <label>Destination server
+      <select name="server" data-auto-submit aria-label="Choose plugin destination server">
+        <?php foreach($pluginTargets as $id=>$row): ?>
+          <option value="<?= h($id) ?>" <?= $id===$selected?'selected':'' ?>><?= h($row['name']??$id) ?> — <?= h(ucfirst($row['software']??'Paper')) ?></option>
+        <?php endforeach; ?>
+      </select>
+    </label>
+    <button class="subtle" <?= !$pluginTargets?'disabled':'' ?>>Select server</button>
+  </form>
+  <?php if (!$pluginTargets): ?><div class="alert warning">No Bukkit/Paper-compatible registered servers are available. Install or import Paper, Spigot, Bukkit, Purpur or Folia first.</div><?php endif; ?>
+  <div class="status-line"><span>Current destination</span><strong><?= h($server['name']??$selected) ?></strong></div>
   <?php if (!$enabled): ?>
     <div class="alert warning">This server implementation is not compatible with Bukkit/Paper plugin JARs. Vanilla and Bedrock do not load them; Fabric and Forge use mods, which require a different manager.</div>
   <?php else: ?>

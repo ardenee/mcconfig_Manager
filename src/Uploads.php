@@ -2,7 +2,7 @@
 declare(strict_types=1);
 /** Private uploads for authenticated administrator jobs only. */
 function manager_upload_file(array $upload,string $kind): array {
-    $max=$kind==='java'?536870912:($kind==='plugin'?134217728:0);
+    $max=in_array($kind,['java','server_jar'],true)?536870912:($kind==='plugin'?134217728:0);
     if (!$max) throw new InvalidArgumentException('Unsupported upload type.');
     if (($upload['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK ||
         !is_string($upload['name']??null) || !is_string($upload['tmp_name']??null) ||

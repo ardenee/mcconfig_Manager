@@ -22,9 +22,9 @@ REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js
             "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
             "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
             "src/Console.php", "src/ConsoleView.php", "src/Uploads.php",
-            "src/Plugins.php", "src/PluginsView.php",
+            "src/Plugins.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
-            "agent/Console.php", "agent/Rcon.php", "agent/Plugins.php",
+            "agent/Console.php", "agent/Rcon.php", "agent/Plugins.php", "agent/ServerJar.php",
             "agent/BackupRestore.php", "agent/Recovery.php",
             "agent/Supervisor.php", "agent/native-supervisor.php",
             "var/.htaccess", "var/index.php"}

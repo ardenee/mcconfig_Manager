@@ -6,6 +6,7 @@ require dirname(__DIR__) . '/src/Manager.php';
 require dirname(__DIR__) . '/src/Console.php';
 require dirname(__DIR__) . '/src/Uploads.php';
 require dirname(__DIR__) . '/src/Plugins.php';
+require dirname(__DIR__) . '/src/ServerJar.php';
 ini_set('session.use_strict_mode', '1');
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -96,6 +97,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $options['sha256']=$uploaded['sha256'];
             }
             $job=manager_enqueue('install_java',$options);
+            redirect('manager','&job='.$job);
+        }
+        if ($action==='server_jar_install') {
+            if (!manager_online()) throw new RuntimeException('Start the management worker to install a Minecraft server JAR.');
+            $id=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$id]??null;
+            if (!is_array($row) || ($row['edition']??'java')!=='java' ||
+                ($row['deployment']??'native')!=='native' ||
+                in_array(($row['install_state']??'ready'),['pending','failed'],true)) {
+                throw new RuntimeException('Select a registered native Java destination server.');
+            }
+            if (empty($_POST['stopped'])) throw new RuntimeException('Confirm the selected server is stopped.');
+            $source=request_string($_POST,'source',16);
+            if (!in_array($source,['catalog','url','upload'],true)) throw new InvalidArgumentException('Invalid JAR installation method.');
+            $version=request_string($_POST,'version',48);
+            if ($version!=='' && $version!=='latest' && !jar_version_valid($version)) {
+                throw new InvalidArgumentException('Choose a valid Minecraft release identifier.');
+            }
+            $params=['source'=>$source,'version'=>$version,'confirmed_stopped'=>true];
+            if ($source==='upload') {
+                if ($version==='latest') throw new InvalidArgumentException('Provide an actual Minecraft version, or leave the version blank for JAR inspection.');
+                $upload=manager_upload_file($_FILES['jar_file']??[],'server_jar');
+                $params['upload_id']=$upload['upload_id'];
+                $params['checksum']=$upload['sha256'];
+            }
+            if ($source==='url') {
+                if ($version==='latest') throw new InvalidArgumentException('Specify a Minecraft release for a direct URL.');
+                $params['url']=request_string($_POST,'url',1600);
+                $params['checksum']=strtolower(request_string($_POST,'checksum',64));
+                if (!preg_match('/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/D',$params['checksum'])) {
+                    throw new InvalidArgumentException('Provide the official SHA-1 or SHA-256 checksum for this server JAR.');
+                }
+            }
+            $job=manager_enqueue('install_server_jar',$params,$id);
+            $_SESSION['server_id']=$id;
             redirect('manager','&job='.$job);
         }
         if (in_array($action,['plugin_upload','plugin_url','plugin_remove'],true)) {
@@ -237,7 +273,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $worldsPath = valid_root($worldsPath !== '' ? $worldsPath : $root . DIRECTORY_SEPARATOR . 'worlds');
             } else $worldsPath = '';
             $id = bin2hex(random_bytes(6));
-            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar, 'edition'=>$edition, 'deployment'=>$deployment, 'worlds_path'=>$worldsPath, 'software'=>$software, 'container_name'=>$containerName];
+            $config['servers'][$id] = ['name'=>$name, 'path'=>$root, 'jar'=>$jar, 'edition'=>$edition, 'deployment'=>$deployment, 'worlds_path'=>$worldsPath, 'software'=>$software, 'container_name'=>$containerName, 'install_state'=>'ready'];
+            if ($edition==='java') {
+                $identified=jar_detect_version($config['servers'][$id]);
+                if ($identified['version']!=='') {
+                    $config['servers'][$id]['version']=$identified['version'];
+                    $config['servers'][$id]['version_source']=$identified['source'];
+                }
+            }
             save_config($config);
             $_SESSION['server_id'] = $id;
             $_SESSION['flash'] = 'Server added.';
@@ -266,6 +309,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = request_string($_POST, 'server_id', 64);
         $server = server_from($config, $id);
         $_SESSION['server_id'] = $id;
+        if ($action === 'properties_create') {
+            if (empty($_POST['stopped'])) throw new RuntimeException('Confirm this Minecraft server is stopped before creating configuration.');
+            $live=manager_running_state($id)['state']??'unknown';
+            if (manager_online() && in_array($live,['running','running-external','running-uncertain','starting'],true)) {
+                throw new RuntimeException('The selected Minecraft server appears to be running. Stop it before creating configuration.');
+            }
+            properties_create_basic($server);
+            $_SESSION['flash']='Basic server.properties created for '.$server['name'].'. Review settings before starting the server.';
+            redirect('properties','&server='.rawurlencode($id));
+        }
         if ($action === 'properties_save') {
             $posted = $_POST['props'] ?? [];
             if (!is_array($posted)) throw new InvalidArgumentException('Invalid properties form.');
@@ -289,9 +342,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('players');
         }
         if ($action === 'jar_upload') {
-            jar_upload($server, $_FILES['jar_file'] ?? [], isset($_POST['stopped']));
-            $_SESSION['flash'] = 'JAR installed. The previous version was backed up when present.';
-            redirect('jar');
+            // Preserve the original generic-web-host upload workflow. DSM package
+            // installs must use the supervised worker instead.
+            if (manager_online() || is_dir('/var/packages/mcconfig') || is_container($server)) {
+                throw new RuntimeException('Use the supervised JAR management installer for this server.');
+            }
+            jar_upload($server,$_FILES['jar_file']??[],!empty($_POST['stopped']));
+            $info=jar_detect_version($server);
+            if ($info['version']!=='') {
+                $config['servers'][$id]['version']=$info['version'];
+                $config['servers'][$id]['version_source']=$info['source'];
+            } else {
+                $manual=request_string($_POST,'version',48);
+                if (jar_version_valid($manual)) {
+                    $config['servers'][$id]['version']=$manual;
+                    $config['servers'][$id]['version_source']='administrator supplied (not independently verified)';
+                }
+            }
+            $config['servers'][$id]['jar']=trim((string)($server['jar']??'')) ?: 'server.jar';
+            save_config($config);
+            if (!is_file($server['path'].'/server.properties')) {
+                try {properties_create_basic($server);} catch(Throwable) {}
+            }
+            $_SESSION['flash']='JAR uploaded for '.$server['name'].'; previous JAR backed up if present. Verify the Minecraft version and Java runtime before starting.';
+            redirect('jar','&server='.rawurlencode($id));
         }
         if ($action === 'save_text') {
             $body = $_POST['content'] ?? null;
@@ -341,6 +415,16 @@ if ($authenticated && $tab==='manager') {
                 $config['servers'][$serverId]['version']=$result['version']??'unknown';
                 $config['servers'][$serverId]['jar']='server.jar';
             } else $config['servers'][$serverId]['install_state']='failed';
+            $changed=true;
+        }
+        if ($operation==='install_server_jar' && $state==='succeeded' &&
+            isset($config['servers'][$serverId])) {
+            $result=$job['result']??[];
+            if (is_string($result['version']??null) && jar_version_valid($result['version'])) {
+                $config['servers'][$serverId]['version']=$result['version'];
+                $config['servers'][$serverId]['version_source']='verified Minecraft JAR installation';
+            }
+            if (is_string($result['jar']??null)) $config['servers'][$serverId]['jar']=$result['jar'];
             $changed=true;
         }
         if ($operation==='restore_backup' && $state==='succeeded' &&
@@ -480,18 +564,19 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <form method="post" data-confirm="Remove this server from mcconfig? Minecraft files will be left alone."><?php hidden_csrf(); ?><input type="hidden" name="action" value="remove_server"><input type="hidden" name="server_id" value="<?= h($id) ?>"><button class="subtle danger-text">Remove</button></form></div>
     <?php endforeach; ?>
     </section>
-    <section class="panel"><h2>Add a Minecraft server</h2>
+    <section class="panel"><h2>Register an existing Minecraft server</h2>
+      <p class="hint">This form only registers an existing folder. It does not download Minecraft, create a JAR or generate server.properties. For a new installation, use <a href="?tab=manager">Server Manager → Install a new Minecraft server</a>.</p>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="add_server">
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
         <label>Edition <select name="edition"><option value="java">Java (Vanilla, CraftBukkit, Spigot, Paper, Fabric, etc.)</option><option value="bedrock">Bedrock Dedicated Server</option></select></label>
         <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><option value="container">Container with host bind-mounted data</option></select></label>
         <label>Server implementation <select name="software"><option value="vanilla">Vanilla Java</option><option value="paper">Paper Java</option><option value="spigot">Spigot Java</option><option value="bukkit">CraftBukkit Java</option><option value="fabric">Fabric Java</option><option value="forge">Forge Java</option><option value="neoforge">NeoForge Java</option><option value="bedrock">Bedrock</option></select></label>
-        <label>Host path containing server.properties <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
+        <label>Existing server directory on NAS (must exist) <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
         <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
         <label>JAR filename (Java only, optional) <input name="jar" placeholder="server.jar"></label>
         <label>Existing Docker container name (container adoption only) <input name="container_name" placeholder="minecraft-paper"></label>
         <p class="hint">Enter NAS host paths, not /data or other paths inside the container. Java containers usually mount a host folder to /data. Bedrock may use separate config and worlds mounts. The PHP service account needs appropriate ACLs.</p>
-        <button class="primary">Add server</button>
+        <button class="primary">Register existing server</button>
       </form>
     </section>
     <section class="panel"><h2>Administrator password</h2>
@@ -548,9 +633,41 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <section class="panel wide"><div class="panel-title"><h2>Recent log lines</h2><a href="?tab=logs">View logs</a></div><pre class="log-preview"><?= h(implode("\n", array_slice(explode("\n", $log),-18))) ?></pre></section>
       </div>
     <?php elseif ($tab === 'properties'): ?>
-      <section class="panel"><div class="panel-title"><div><h2>server.properties</h2><p class="muted">All current keys are shown, including options added in newer Minecraft versions.</p></div><input id="property-search" placeholder="Filter properties…" aria-label="Filter properties"></div>
-        <?php if (is_container($server)): ?><div class="alert warning">Container environment variables or startup scripts can override these file settings. For itzg Java images, set OVERRIDE_SERVER_PROPERTIES=false when managing this file directly.</div><?php endif; ?>
-        <?php if (!is_file(server_file($server, 'server.properties'))): ?><p class="alert warning">No server.properties found at the configured server path.</p><?php else: ?>
+      <section class="panel"><div class="panel-title"><div><h2>server.properties</h2><p class="muted">Settings for this specific server; additional keys appear after Minecraft generates them on first startup.</p></div><input id="property-search" placeholder="Filter properties…" aria-label="Filter properties"></div>
+        <?php $versionInfo=is_bedrock($server)?['version'=>(string)($server['version']??''),'source'=>'registered Bedrock version']:jar_detect_version($server); ?>
+        <div class="status-line"><span>Server</span><strong><?= h($server['name']??$selected) ?></strong></div>
+        <div class="status-line"><span>Minecraft version</span><strong><?= h($versionInfo['version']?:'Not yet detected') ?></strong></div>
+        <?php if (!is_bedrock($server) && $versionInfo['version']!==''): ?>
+          <div class="status-line"><span>Expected Java runtime</span><strong>Java <?= jar_java_required($versionInfo['version']) ?: 'unknown' ?></strong></div>
+        <?php endif; ?>
+        <p class="hint">Version source: <?= h($versionInfo['source']??'Not available') ?></p>
+        <?php if (is_container($server)): ?><div class="alert warning">Container environment variables or startup scripts can override these file settings. The container may generate server.properties only after its first successful start; inspect its /data bind mount.</div><?php endif; ?>
+        <?php if (!is_file(server_file($server, 'server.properties'))): ?>
+          <div class="alert warning"><strong>No server.properties has been created for this server.</strong>
+            The Add Server form registers a folder; it does not download Minecraft or generate its settings. A new Server Manager installation creates this file after the server JAR is downloaded successfully.</div>
+          <p class="hint">Registered folder: <code><?= h($server['path']) ?></code></p>
+          <?php if (is_container($server)): ?>
+            <p>Start the Minecraft container in Server Manager and inspect its startup logs. Ensure the registered directory is the actual container <code>/data</code> bind mount.</p>
+          <?php elseif (is_bedrock($server)): ?>
+            <p>Bedrock generates its properties when the Bedrock dedicated server first starts. Check the installation and server logs.</p>
+          <?php else:
+            $name=trim((string)($server['jar']??'')) ?: 'server.jar';
+            $file=preg_match('/^[A-Za-z0-9_.-]+\.jar$/iD',$name)?server_file($server,$name):'';
+          ?>
+            <?php if ($file==='' || !is_file($file)): ?>
+              <p>This server does not have its configured JAR (<code><?= h($name) ?></code>). Install a Minecraft server JAR first; mcmanager can then create basic properties.</p>
+              <p><a class="subtle" href="?tab=jar&amp;server=<?= h($selected) ?>">Open JAR management</a></p>
+            <?php else: ?>
+              <p>A server JAR exists, but Minecraft has not generated its settings. You can create a minimal editable configuration without overwriting any existing file.</p>
+              <form method="post" data-confirm="Create a new basic server.properties for this stopped server?">
+                <?php hidden_csrf();hidden_server($selected); ?>
+                <input type="hidden" name="action" value="properties_create">
+                <label class="check"><input type="checkbox" name="stopped" required> I confirm this server is stopped.</label>
+                <button class="primary">Create basic server.properties</button>
+              </form>
+            <?php endif; ?>
+          <?php endif; ?>
+        <?php else: ?>
         <form method="post"><?php hidden_csrf(); hidden_server($selected); ?><input type="hidden" name="action" value="properties_save">
           <div class="properties-grid">
           <?php foreach ($props as $key=>$value): ?>
@@ -633,25 +750,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
     <?php elseif ($tab === 'logs'): ?>
       <section class="panel"><div class="panel-title"><div><h2><?= h($logname ?: 'Server log') ?></h2><p class="muted">Latest 350 lines, with a 256 KiB read limit.</p></div><a href="?tab=logs" class="subtle">Refresh</a></div><pre class="log-full"><?= h($log) ?></pre></section>
     <?php elseif ($tab === 'jar'): ?>
-      <?php if (is_bedrock($server)): ?>
-      <section class="panel"><h2>Bedrock server software</h2><p>Bedrock does not use Java JAR files. Update the Bedrock server through your container image or native installation, after backing up your worlds and configuration.</p></section>
-      <?php else: ?>
-      <section class="panel"><h2>Local server JAR</h2>
-      <?php $jarName = (string)($server['jar'] ?? ''); $jarPath = $jarName !== '' ? server_file($server, $jarName) : ''; ?>
-      <div class="status-line"><span>Configured JAR</span><strong><?= h($jarName ?: 'Not configured') ?></strong></div>
-      <div class="status-line"><span>Current file</span><strong><?= $jarPath !== '' && is_file($jarPath) ? h(number_format((filesize($jarPath) ?: 0) / 1048576, 1).' MiB') : 'Not found' ?></strong></div>
-      <?php if ($jarPath === ''): ?><div class="alert warning">Add a server with a JAR filename under Settings before uploading.</div>
-      <?php else: ?>
-        <div class="alert warning">Stop the Minecraft process before replacing its JAR. This application deliberately does not run shell commands, scrape download links or start/stop services.</div>
-        <form method="post" enctype="multipart/form-data"><?php hidden_csrf(); hidden_server($selected); ?><input type="hidden" name="action" value="jar_upload">
-          <label>Upload replacement server JAR <input type="file" name="jar_file" accept=".jar" required></label>
-          <label class="check"><input type="checkbox" name="stopped" required> I confirm that the Minecraft server is stopped.</label>
-          <button class="primary">Install uploaded JAR</button>
-        </form>
-        <p class="hint">A timestamped backup of the old JAR is retained. Upload size is limited by your PHP profile and mcconfig's 512 MiB cap.</p>
-      <?php endif; ?>
-      </section>
-      <?php endif; ?>
+      <?php require dirname(__DIR__).'/src/ServerJarView.php'; ?>
     <?php endif; ?>
   <?php endif; ?>
 </main>

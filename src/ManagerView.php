@@ -134,10 +134,15 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     $state=manager_running_state((string)$id);
     $pending=($row['install_state']??'')==='pending';
     $status=$pending?'Provisioning':($state['state']??'Not controlled');
-    $software=$row['software']??($row['edition']??'java'); ?>
+    $software=$row['software']??($row['edition']??'java');
+    $detected=(($row['edition']??'java')==='java' && is_dir((string)($row['path']??'')))?
+        jar_detect_version($row):['version'=>'','source'=>''];
+    $shownVersion=$detected['version'] ?: (string)($state['version']??($row['version']??''));
+    ?>
     <div class="server-manager-item">
       <div class="panel-title"><div><h3><?= h($row['name']??$id) ?></h3>
-        <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · <?= h($row['version']??'Unknown version') ?></p>
+        <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · Minecraft <?= h($shownVersion?:'version not detected') ?></p>
+        <?php if ($detected['source']!==''): ?><p class="hint">Version source: <?= h($detected['source']) ?></p><?php endif; ?>
         <code><?= h($row['path']??'') ?></code>
       </div><strong><?= h($status) ?></strong></div>
       <?php if (($row['deployment']??'native')==='native'): ?>

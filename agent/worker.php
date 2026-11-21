@@ -7,7 +7,9 @@ require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
 require dirname(__DIR__).'/src/Uploads.php';
 require dirname(__DIR__).'/src/Plugins.php';
+require dirname(__DIR__).'/src/ServerJar.php';
 require __DIR__.'/Plugins.php';
+require __DIR__.'/ServerJar.php';
 require __DIR__.'/Status.php';
 require dirname(__DIR__).'/src/Console.php';
 require __DIR__.'/Console.php';
@@ -632,6 +634,51 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
     if ($op==='discover') return ['found'=>worker_discover()];
     if ($op==='install_java') return ['runtime'=>worker_install_java((int)($params['major']??0),$params)];
     if ($op==='install') return worker_install($id,$params,$native);
+    if ($op==='install_server_jar') {
+        $row=worker_server($id);
+        if (in_array(($row['install_state']??'ready'),['pending','failed'],true)) {
+            throw new RuntimeException('Complete server provisioning or unregister the failed entry first.');
+        }
+        if (($row['edition']??'java')!=='java' || ($row['deployment']??'native')!=='native') {
+            throw new RuntimeException('The selected destination is not a native Java Minecraft server.');
+        }
+        if (empty($params['confirmed_stopped'])) {
+            throw new RuntimeException('Confirm the destination Minecraft server is stopped before replacing its executable.');
+        }
+        $root=valid_root((string)($row['path']??''));
+        $existing=worker_meta($root);
+        if ($existing && ($existing['manager_id']??'')!==$id) {
+            throw new RuntimeException('This server directory belongs to another manager registration.');
+        }
+        if ($existing) {
+            [$root,$meta]=worker_managed($id,$row);
+            $state=worker_native_state($id,$native);
+            $live=worker_live_stats($id,$meta,$state,$native);
+            if (!empty($live['external_process']) || $state!=='stopped') {
+                throw new RuntimeException('Stop the running Minecraft process before replacing its JAR.');
+            }
+        } else {
+            $meta=[
+                'manager_id'=>$id,'edition'=>'java','deployment'=>'native',
+                'software'=>$row['software']??'vanilla',
+                'name'=>$row['name']??'Minecraft',
+                'version'=>$row['version']??'unknown',
+                'jar'=>trim((string)($row['jar']??'')) ?: 'server.jar',
+                'port'=>(int)($row['port']??(properties_read($row)['server-port']??25565)),
+                'memory'=>(int)($row['memory']??2048),
+                'imported'=>true
+            ];
+            $port=(int)$meta['port'];
+            if ($port>=1024 && $port<=65535) {
+                $socket=@stream_socket_client('tcp://127.0.0.1:'.$port,$errno,$errstr,0.25);
+                if (is_resource($socket)) {
+                    fclose($socket);
+                    throw new RuntimeException('A process is listening on this Minecraft server port. Stop it before replacing its JAR.');
+                }
+            }
+        }
+        return worker_server_jar_install($id,$row,$meta,$params,'stopped');
+    }
     $row=worker_server($id);
     if ($op==='adopt') {
         $meta=worker_adopt($id,$params['server']??[]);
@@ -651,6 +698,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
     }
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
+    if ($op==='install_server_jar') return worker_server_jar_install($id,$row,$meta,$params,$state);
     if ($op==='install_plugin' || $op==='remove_plugin') {
         return worker_plugin_apply($op,$id,$row,$meta,$params,$state);
     }
