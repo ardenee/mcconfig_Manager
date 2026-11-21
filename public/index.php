@@ -10,6 +10,7 @@ require dirname(__DIR__) . '/src/PluginPackages.php';
 require dirname(__DIR__) . '/src/DockerAccess.php';
 require dirname(__DIR__) . '/src/DsmOnDemand.php';
 require dirname(__DIR__) . '/src/DsmBedrock.php';
+require dirname(__DIR__) . '/src/DsmWizard.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
 require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
@@ -80,6 +81,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION = [];
             session_regenerate_id(true);
             redirect();
+        }
+        if ($action === 'dsm_wizard') {
+            if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('The Bedrock installer requires Synology DSM on Linux.');
+            if (empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off') {
+                throw new RuntimeException('Open mcmanager over HTTPS to authorize Bedrock installation.');
+            }
+            if (strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))!=='xmlhttprequest') {
+                throw new RuntimeException('This installer requires JavaScript. Enable it in your browser.');
+            }
+            $tries=(int)($_SESSION['dsm_approval_tries']??0);
+            $since=(int)($_SESSION['dsm_approval_since']??0);
+            if ($since===0||time()-$since>900) {$tries=0;$since=time();}
+            if ($tries>=4) throw new RuntimeException('Too many failed DSM authorization attempts. Try again in 15 minutes.');
+            $_SESSION['dsm_approval_since']=$since;
+            $_SESSION['dsm_approval_tries']=$tries+1;
+            try {
+                $dsmReport=dsm_wizard_step($_POST,$config);
+                $_SESSION['dsm_approval_tries']=0;
+                if (!empty($dsmReport['server_id'])) $_SESSION['server_id']=$dsmReport['server_id'];
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok'=>true,'result'=>$dsmReport],JSON_THROW_ON_ERROR|JSON_INVALID_UTF8_SUBSTITUTE);
+                exit;
+            } finally {
+                unset($_POST['dsm_password'],$_POST['dsm_otp']);
+            }
         }
         if ($action === 'dsm_approve_once') {
             if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('This approval mode is available only on a Synology/Linux installation.');
@@ -531,6 +557,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = $e->getMessage();
         // Do not expose filesystem details in the login screen.
         if (!$authenticated && $installed && $action !== 'login') $error = 'Please log in.';
+        if ($action==='dsm_wizard') {
+            $phase=request_string($_POST,'dsm_operation',24);
+            $advice=dsm_wizard_error_help($error,$phase);
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok'=>false,'error'=>$error,'title'=>$advice['title'],
+                'help'=>$advice['help']],JSON_INVALID_UTF8_SUBSTITUTE);
+            exit;
+        }
         if ($action==='console_send' && strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))==='xmlhttprequest') {
             http_response_code(400);
             header('Content-Type: application/json; charset=utf-8');
@@ -669,8 +704,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.9">
-<script src="assets/app.js?v=0.5.9" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.10">
+<script src="assets/app.js?v=0.5.10" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.10" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

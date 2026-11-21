@@ -19,8 +19,8 @@ FOLDERS = ("public", "src", "agent", "var")
 SCRIPTS = ("preinst", "postinst", "preuninst", "postuninst", "preupgrade", "postupgrade", "start-stop-status")
 EXTENSIONS = {".php", ".js", ".css", ".png", ".htaccess"}
 REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js",
-            "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
-            "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
+            "public/assets/mcconfig.png", "public/assets/bedrock-wizard.js", "src/App.php", "src/ServerTypes.php",
+            "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php", "src/BedrockWizardView.php", "src/DsmWizard.php",
             "src/Console.php", "src/ConsoleView.php", "src/Uploads.php",
             "src/Plugins.php", "src/PluginPackages.php", "src/DockerAccess.php", "src/DsmOnDemand.php", "src/DsmBedrock.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php", "src/Startup.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",

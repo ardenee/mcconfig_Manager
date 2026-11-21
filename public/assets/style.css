@@ -128,3 +128,48 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-bedrock-step .form-row>label{min-width:140px}
 .mc-bedrock-step button{justify-self:start}
 @media(max-width:700px){.mc-bedrock-step{padding:11px}.mc-bedrock-step .form-row{grid-template-columns:1fr}}
+
+/* Bedrock installer: one form, one submit, with self-contained progress/error. */
+.mc-bedrock-wizard{padding:17px 20px}
+.mc-bedrock-wizard .panel-title{margin-bottom:10px}
+.mc-bedrock-wizard .panel-title p{margin:3px 0 0}
+.mc-bedrock-wizard form[data-bedrock-wizard]{display:grid;gap:12px}
+.mc-bedrock-wizard .mc-wizard-fields>label{display:block;max-width:450px}
+.mc-bedrock-wizard .mc-wizard-fields input{margin:5px 0 0}
+.mc-bedrock-wizard .mc-wizard-advanced{margin:9px 0 0;border:0;padding:0}
+.mc-bedrock-wizard .mc-wizard-advanced summary{font-size:12px;font-weight:600;cursor:pointer;color:#46627d}
+.mc-bedrock-wizard .mc-wizard-advanced[open] .form-row{padding:9px 0 2px;max-width:530px}
+.mc-bedrock-wizard .mc-wizard-auth{border-top:1px solid #e8edf4;padding-top:10px}
+.mc-bedrock-wizard .mc-wizard-auth>strong{font-size:13px}
+.mc-bedrock-wizard .mc-wizard-auth .hint{margin:3px 0 9px;font-size:12px}
+.mc-bedrock-wizard .mc-wizard-auth .form-row{gap:10px}
+.mc-bedrock-wizard .mc-wizard-auth input{min-width:0;max-width:320px}
+.mc-bedrock-wizard .check{margin:0;font-size:12px}
+.mc-bedrock-wizard .mc-wizard-buttons{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.mc-bedrock-wizard .mc-wizard-buttons button{padding:9px 15px}
+.mc-bedrock-wizard .mc-wizard-progress{border-top:1px solid #e8edf4;padding-top:13px}
+.mc-bedrock-wizard .mc-wizard-progress-title{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:12px}
+.mc-bedrock-wizard progress{width:100%;height:10px;margin:9px 0;accent-color:#218d59}
+.mc-bedrock-wizard .mc-wizard-checklist{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:6px;list-style:none;counter-reset:none;margin:6px 0;padding:0}
+.mc-bedrock-wizard .mc-wizard-checklist li{padding:7px 7px 7px 23px;position:relative;border-radius:6px;background:#f3f6fa;color:#7b8898;font-size:11px;line-height:1.3}
+.mc-bedrock-wizard .mc-wizard-checklist li::before{content:'·';position:absolute;left:9px;font-size:16px;line-height:12px}
+.mc-bedrock-wizard .mc-wizard-checklist li[data-state=active]{color:#234568;background:#e4edf9;font-weight:700}
+.mc-bedrock-wizard .mc-wizard-checklist li[data-state=active]::before{content:'↻'}
+.mc-bedrock-wizard .mc-wizard-checklist li[data-state=done]{background:#e9f5ec;color:#24653d}
+.mc-bedrock-wizard .mc-wizard-checklist li[data-state=done]::before{content:'✓';font-size:12px}
+.mc-bedrock-wizard .mc-wizard-progress>.hint{margin:8px 0 0}
+.mc-bedrock-wizard .mc-wizard-error{margin:0;padding:10px 13px}
+.mc-bedrock-wizard .mc-wizard-error strong{display:block}
+.mc-bedrock-wizard .mc-wizard-error p{margin:6px 0;font-size:12px}
+.mc-bedrock-wizard .mc-wizard-error button{margin-top:7px}
+.mc-bedrock-wizard .mc-wizard-complete{border-top:1px solid #cfe4d5;padding:12px 0 2px}
+.mc-bedrock-wizard .mc-wizard-complete>strong{color:#25673c}
+.mc-bedrock-wizard .mc-wizard-complete p{margin:6px 0 10px}
+.mc-bedrock-wizard .mc-wizard-complete a{display:inline-flex}
+.mc-bedrock-wizard .mc-wizard-busy .mc-wizard-auth input,
+.mc-bedrock-wizard .mc-wizard-busy .mc-wizard-fields input{pointer-events:none;opacity:.78}
+.mc-bedrock-wizard [hidden]{display:none!important}
+@media(max-width:900px){.mc-bedrock-wizard .mc-wizard-checklist{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:610px){.mc-bedrock-wizard{padding:12px}.mc-bedrock-wizard .mc-wizard-checklist{grid-template-columns:1fr}.mc-bedrock-wizard .form-row{display:grid;grid-template-columns:1fr}.mc-bedrock-wizard .mc-wizard-auth input{max-width:none}}
+.mc-bedrock-wizard .mc-wizard-recovery-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+.mc-bedrock-wizard .mc-wizard-recovery-actions button{margin:0}

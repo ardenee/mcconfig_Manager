@@ -52,7 +52,10 @@ function dsm_approval_checked(array $reply,string $what): array {
     if (($reply['success']??false)!==true) {
         $code=$reply['error']['code']??'unknown';
         // Never include DSM responses or token values in displayed errors.
-        throw new RuntimeException($what.' failed (DSM error '.(is_int($code)?$code:'unknown').'). Verify DSM admin permissions or two-factor authentication.');
+        $suffix=$what==='DSM login'
+            ?'Verify the DSM administrator username, password, login privileges or current one-time code.'
+            :'Check Container Manager application permissions and the requested operation on this NAS.';
+        throw new RuntimeException($what.' failed (DSM error '.(is_int($code)?$code:'unknown').'). '.$suffix);
     }
     return is_array($reply['data']??null)?$reply['data']:[];
 }
@@ -94,7 +97,7 @@ function dsm_approval_once(
     string $account,string $password,string $operation,
     ?array $server=null,string $otp='',?callable $send=null
 ): array {
-    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-create','bedrock-verify'],true)) {
+    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify'],true)) {
         throw new InvalidArgumentException('Unsupported DSM one-time operation.');
     }
     if (!preg_match('/^[\w.@-]{1,64}$/D',$account) ||
@@ -133,7 +136,7 @@ function dsm_approval_once(
             $headers=$token!==''?['X-SYNO-TOKEN: '.$token]:[];
             return $send($params,$headers);
         };
-        if (in_array($operation,['bedrock-image','bedrock-pull','bedrock-create'],true)) {
+        if (in_array($operation,['bedrock-image','bedrock-pull','bedrock-poll','bedrock-create'],true)) {
             return dsm_bedrock_api_action($api,$operation,$server);
         }
         if ($operation==='bedrock-verify') {
