@@ -1,8 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('[data-auto-submit]').forEach(el => el.addEventListener('change', () => el.form?.requestSubmit()));
-  document.querySelectorAll('form[data-confirm]').forEach(el => el.addEventListener('submit', event => {
-    if (!window.confirm(el.dataset.confirm || 'Are you sure?')) event.preventDefault();
-  }));
+  // Delegation also covers job controls replaced during live updates.
+  document.addEventListener('submit', event => {
+    const form = event.target.closest?.('form[data-confirm]');
+    if (form && !window.confirm(form.dataset.confirm || 'Are you sure?')) event.preventDefault();
+  });
   document.querySelector('[data-toggle-nav]')?.addEventListener('click', () => document.body.classList.toggle('show-sidebar'));
   document.querySelectorAll('.sidebar nav a').forEach(el => el.addEventListener('click', () => document.body.classList.remove('show-sidebar')));
   document.getElementById('property-search')?.addEventListener('input', event => {
@@ -120,37 +122,55 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-// Refresh the selected management job every three seconds until it finishes.
+// Keep selected job results, the queue and job history current. Polling does
+// not stop when a job succeeds: later operations may still complete on this page.
 document.addEventListener('DOMContentLoaded', () => {
-  const original = document.querySelector('[data-manager-job]');
-  if (!original) return;
-  let loading = false;
-  const fetchJob = async () => {
-    if (document.hidden || loading) return;
-    const current = document.querySelector('[data-manager-job]');
-    if (!current || !['queued', 'running'].includes(current.dataset.jobState)) return;
-    loading = true;
-    try {
-      const url = new URL('index.php', window.location.href);
-      url.searchParams.set('tab', 'manager');
-      url.searchParams.set('job', original.dataset.managerJob);
-      const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
-      if (!response.ok) throw new Error('Job refresh failed');
-      const parsed = new DOMParser().parseFromString(await response.text(), 'text/html');
-      const refreshed = parsed.querySelector('[data-manager-job]');
-      if (refreshed && refreshed.dataset.managerJob === original.dataset.managerJob) {
-        current.replaceWith(document.importNode(refreshed, true));
-      }
-    } catch (error) {
-      // The existing result stays visible; manual refresh remains available.
-    } finally { loading = false; }
+  if (!document.querySelector('[data-manager-recent]')) return;
+  const url = new URL(window.location.href);
+  url.searchParams.set('tab', 'manager');
+  let busy = false;
+  let failures = 0;
+  const report = message => {
+    document.querySelectorAll('[data-manager-sync]').forEach(node => {
+      node.textContent = message;
+    });
   };
-  const interval = setInterval(() => {
-    const panel = document.querySelector('[data-manager-job]');
-    if (!panel || !['queued', 'running'].includes(panel.dataset.jobState)) {
-      clearInterval(interval); return;
+  const refresh = async () => {
+    if (document.hidden || busy) return;
+    busy = true;
+    try {
+      const response = await fetch(url.href, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      const next = new DOMParser().parseFromString(await response.text(), 'text/html');
+      if (!next.querySelector('[data-manager-recent]')) {
+        throw new Error('Management session expired or page not available');
+      }
+      for (const selector of ['[data-manager-job]', '[data-manager-queued]', '[data-manager-recent]']) {
+        const current = document.querySelector(selector);
+        const fresh = next.querySelector(selector);
+        if (!current || !fresh) continue;
+        if (selector === '[data-manager-job]' &&
+            current.dataset.managerJob !== fresh.dataset.managerJob) continue;
+        current.replaceWith(document.importNode(fresh, true));
+      }
+      failures = 0;
+      report('Updated ' + new Date().toLocaleTimeString() + ' (every 3 seconds)');
+    } catch (error) {
+      failures += 1;
+      report('Auto-refresh unavailable (' + (error?.message || 'connection error') +
+        '). Use Refresh, or check your login.');
+    } finally {
+      busy = false;
     }
-    fetchJob();
-  }, 3000);
-  fetchJob();
+  };
+  window.setInterval(refresh, 3000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refresh();
+  });
+  window.addEventListener('focus', refresh);
+  refresh();
 });

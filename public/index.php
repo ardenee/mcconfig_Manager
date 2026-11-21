@@ -7,6 +7,7 @@ require dirname(__DIR__) . '/src/Console.php';
 require dirname(__DIR__) . '/src/Uploads.php';
 require dirname(__DIR__) . '/src/Plugins.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
+require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -194,6 +195,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
             $_SESSION['flash']='The queued job was cancelled without execution.';
             redirect('manager');
+        }
+        if ($action === 'manager_startup') {
+            if (!manager_online()) throw new RuntimeException('Management worker is offline.');
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$serverId]??null;
+            if (!is_array($row) || ($row['edition']??'java')!=='java' ||
+                ($row['deployment']??'native')!=='native' ||
+                in_array(($row['install_state']??'ready'),['pending','failed'],true)) {
+                throw new RuntimeException('Select a registered, installed native Java server.');
+            }
+            $values=startup_settings($_POST,(int)($row['memory']??2048));
+            $job=manager_enqueue('configure_startup',$values,$serverId);
+            $_SESSION['server_id']=$serverId;
+            redirect('manager','&job='.$job);
         }
         if ($action === 'manager_backup_retention') {
             $serverId=request_string($_POST,'server_id',64);
@@ -420,11 +435,27 @@ if ($authenticated && $tab==='manager') {
         if ($operation==='install_server_jar' && $state==='succeeded' &&
             isset($config['servers'][$serverId])) {
             $result=$job['result']??[];
-            if (is_string($result['version']??null) && jar_version_valid($result['version'])) {
+            if (is_string($result['version']??null) && jar_version_valid($result['version']) &&
+                ($config['servers'][$serverId]['version']??'')!==$result['version']) {
                 $config['servers'][$serverId]['version']=$result['version'];
                 $config['servers'][$serverId]['version_source']='verified Minecraft JAR installation';
+                $changed=true;
             }
-            if (is_string($result['jar']??null)) $config['servers'][$serverId]['jar']=$result['jar'];
+            if (is_string($result['jar']??null) &&
+                ($config['servers'][$serverId]['jar']??'')!==$result['jar']) {
+                $config['servers'][$serverId]['jar']=$result['jar'];
+                $changed=true;
+            }
+        }
+        if ($operation==='configure_startup' && $state==='succeeded' &&
+            isset($config['servers'][$serverId]) &&
+            (int)($job['finished']??0)>(int)($config['servers'][$serverId]['startup_applied_at']??0)) {
+            foreach(['memory','xms','jvm_args','netty_workdir'] as $key) {
+                if (array_key_exists($key,$job['result']??[])) {
+                    $config['servers'][$serverId][$key]=$job['result'][$key];
+                }
+            }
+            $config['servers'][$serverId]['startup_applied_at']=(int)($job['finished']??0);
             $changed=true;
         }
         if ($operation==='restore_backup' && $state==='succeeded' &&
@@ -505,8 +536,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css">
-<script src="assets/app.js" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.3">
+<script src="assets/app.js?v=0.5.3" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
