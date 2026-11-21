@@ -15,12 +15,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PACK = ROOT / "packaging" / "dsm7"
 OUT = ROOT / "dist"
-FOLDERS = ("public", "src", "var")
+FOLDERS = ("public", "src", "agent", "var")
 SCRIPTS = ("preinst", "postinst", "preuninst", "postuninst", "preupgrade", "postupgrade", "start-stop-status")
 EXTENSIONS = {".php", ".js", ".css", ".png", ".htaccess"}
 REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js",
             "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
-            "src/BedrockPlayersView.php", "var/.htaccess", "var/index.php"}
+            "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
+            "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
+            "var/.htaccess", "var/index.php"}
 
 
 def web_files() -> dict[str, bytes]:
@@ -29,7 +31,9 @@ def web_files() -> dict[str, bytes]:
         root = ROOT / folder
         if not root.is_dir() or root.is_symlink():
             raise RuntimeError(f"Missing generic application directory: {root}")
-        for file in sorted(root.rglob("*")):
+        # Private runtime state must never be included, even after a local worker ran.
+        candidates = [root / ".htaccess", root / "index.php"] if folder == "var" else sorted(root.rglob("*"))
+        for file in candidates:
             relative = file.relative_to(ROOT).as_posix()
             if file.is_symlink():
                 raise RuntimeError(f"Symlink cannot be packaged: {relative}")
@@ -117,7 +121,7 @@ def validate_dsm() -> None:
 
 
 def zip_web(files: dict[str, bytes], out: Path) -> Path:
-    path = out / f"mcconfig-web-{package_version()}.zip"
+    path = out / f"mcmanager-web-{package_version()}.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, body in sorted(files.items()):
             entry = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
@@ -141,7 +145,7 @@ def spk(files: dict[str, bytes], out: Path) -> Path:
     compressed = io.BytesIO()
     with gzip.GzipFile(fileobj=compressed, filename="", mode="wb", mtime=0) as compressed_file:
         with tarfile.open(fileobj=compressed_file, mode="w", format=tarfile.USTAR_FORMAT) as inner:
-            for directory in ("webapp", "webapp/public", "webapp/public/assets", "webapp/src", "webapp/var", "ui"):
+            for directory in ("webapp", "webapp/public", "webapp/public/assets", "webapp/src", "webapp/agent", "webapp/var", "ui"):
                 add_directory(inner, directory)
             for name, body in sorted(app.items()):
                 add_bytes(inner, name, body)
@@ -157,7 +161,7 @@ def spk(files: dict[str, bytes], out: Path) -> Path:
     }
     for name in SCRIPTS:
         outer["scripts/" + name] = ((PACK / "scripts" / name).read_bytes().replace(b"\r\n", b"\n"), 0o755)
-    path = out / f"mcconfig-DSM7-{package_version()}.spk"
+    path = out / f"mcmanager-DSM7-{package_version()}.spk"
     with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as archive:
         for name in ("INFO", "package.tgz"):
             body, mode = outer[name]

@@ -3,7 +3,7 @@
     "services": [
       {
         "service": "mcconfig",
-        "display_name": "mcconfig",
+        "display_name": "mcmanager",
         "support_alias": true,
         "support_server": false,
         "type": "nginx_php",
@@ -30,7 +30,7 @@
       {
         "service": "mcconfig",
         "name": "mcconfig",
-        "display_name": "mcconfig",
+        "display_name": "mcmanager",
         "type": "alias",
         "alias": "mcconfig"
       }
