@@ -4,15 +4,27 @@ declare(strict_types=1);
  * No package manager commands and no modifications to system Java.
  * Source: api.adoptium.net, checksum verified before extraction.
  */
-function worker_java_asset(int $major): array {
-    if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Managed Java supports LTS 17, 21 and 25.');
-    if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Managed Temurin JRE installation currently requires Linux.');
-    $platform=strtolower(php_uname('m'));
-    $arch=match($platform) {
+function worker_java_architecture(): string {
+    if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Managed Java installation requires Linux.');
+    return match(strtolower(php_uname('m'))) {
         'x86_64','amd64'=>'x64',
         'aarch64','arm64'=>'aarch64',
-        default=>throw new RuntimeException('No compatible Temurin JRE for this CPU architecture.')
+        default=>throw new RuntimeException('No supported Temurin JRE for NAS CPU '.php_uname('m'))
     };
+}
+function worker_java_validate_binary_arch(string $file,string $arch): void {
+    $head=@file_get_contents($file,false,null,0,20);
+    if (!is_string($head) || strlen($head)<20 || substr($head,0,4)!=="\x7fELF" ||
+        ord($head[4])!==2 || ord($head[5])!==1) {
+        throw new RuntimeException('Java executable is not a supported 64-bit Linux ELF binary.');
+    }
+    $machine=unpack('v',substr($head,18,2))[1]??0;
+    $wanted=match($arch) {'x64'=>62,'aarch64'=>183,default=>0};
+    if ($machine!==$wanted) throw new RuntimeException('Java executable architecture does not match the NAS CPU.');
+}
+function worker_java_asset(int $major): array {
+    if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Managed Java supports LTS 17, 21 and 25.');
+    $arch=worker_java_architecture();
     $url="https://api.adoptium.net/v3/assets/latest/$major/hotspot?architecture=$arch&image_type=jre&os=linux&vendor=eclipse";
     $assets=worker_json_url($url,['api.adoptium.net']);
     if (!isset($assets[0]) || !is_array($assets[0])) throw new RuntimeException('Adoptium does not list a compatible release.');
@@ -29,12 +41,12 @@ function worker_java_asset(int $major): array {
         'release'=>(string)($assets[0]['release_name']??'unknown')];
 }
 function worker_download_java_archive(string $url,string $expected,string $target): void {
-    $allowed=['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com'];
+    $allowed=['github.com','release-assets.githubusercontent.com','objects.githubusercontent.com','api.adoptium.net','cdn.modrinth.com'];
     for ($hop=0;$hop<5;$hop++) {
         worker_allowed_url($url,$allowed);
         $context=stream_context_create(['http'=>[
             'timeout'=>80,'follow_location'=>0,'ignore_errors'=>true,
-            'header'=>"User-Agent: mcmanager/0.4.0 (https://github.com/ardenee/mcconfig)\r\n"
+            'header'=>"User-Agent: mcmanager/0.5.1 (https://github.com/ardenee/mcconfig)\r\n"
         ],'ssl'=>['verify_peer'=>true,'verify_peer_name'=>true]]);
         $input=@fopen($url,'rb',false,$context);
         if (!$input) throw new RuntimeException('Could not download verified Temurin runtime.');
@@ -55,7 +67,11 @@ function worker_download_java_archive(string $url,string $expected,string $targe
         }
         $output=fopen($target,'wb');
         if (!$output) {fclose($input);throw new RuntimeException('Cannot allocate JRE archive.');}
-        $hash=hash_init('sha256');$length=0;
+        $hash=hash_init('sha256');$length=0;$lastReported=0;
+        $expectedSize=0;
+        foreach($headers as $line) {
+            if (preg_match('/^Content-Length:\s*(\d+)/i',$line,$m)) $expectedSize=(int)$m[1];
+        }
         try {
             while (!feof($input)) {
                 $chunk=fread($input,1048576);
@@ -63,7 +79,14 @@ function worker_download_java_archive(string $url,string $expected,string $targe
                 $length+=strlen($chunk);
                 if ($length>536870912) throw new RuntimeException('JRE archive exceeds 512 MiB safety limit.');
                 hash_update($hash,$chunk);
-                if ($chunk!=='' && fwrite($output,$chunk)!==strlen($chunk)) throw new RuntimeException('JRE archive write failed.');
+                if ($chunk!=='' && fwrite($output,$chunk)!==strlen($chunk)) throw new RuntimeException('Archive write failed.');
+                if ($length-$lastReported>=4194304) {
+                    $lastReported=$length;
+                    $percent=$expectedSize>0
+                        ?12+(int)floor(min(30,30*$length/$expectedSize))
+                        :12+(int)min(30,$length/4194304);
+                    worker_progress($percent,'Downloading verified archive: '.round($length/1048576,1).' MiB received');
+                }
             }
         } finally { fclose($input);fclose($output); }
         if (!hash_equals($expected,hash_final($hash))) {
@@ -92,8 +115,12 @@ function worker_choose_java(string $version): string {
     }
     return $system;
 }
-function worker_install_java(int $major): array {
+function worker_install_java(int $major,array $options=[]): array {
     $asset=worker_java_asset($major);
+    $mode=(string)($options['source']??'catalog');
+    if (!in_array($mode,['catalog','url','upload'],true)) {
+        throw new InvalidArgumentException('Invalid Java download source.');
+    }
     $tar=worker_bin('tar');
     if (!$tar) throw new RuntimeException('tar is needed to install a managed JRE.');
     $runtimes=worker_root().'/runtimes';
@@ -102,7 +129,32 @@ function worker_install_java(int $major): array {
     mkdir($stage,0700);
     $archive=$stage.'/temurin.tar.gz';
     try {
-        worker_download_java_archive($asset['url'],$asset['sha256'],$archive);
+        worker_progress(12,'Validating Java '.$major.' for NAS '.$asset['architecture']);
+        if ($mode==='url') {
+            $url=(string)($options['url']??'');
+            if (strlen($url)>1500 ||
+                !preg_match('~^https://(?:github\\.com/adoptium/temurin[0-9]+-binaries/releases/download/|api\\.adoptium\\.net/v3/binary/latest/)~i',$url)) {
+                throw new RuntimeException('Only official Adoptium Temurin release URLs are accepted.');
+            }
+            // Every source must equal the current upstream checksum for this
+            // Java major and CPU architecture; user-supplied archives cannot bypass it.
+            worker_download_java_archive($url,$asset['sha256'],$archive);
+        } elseif ($mode==='upload') {
+            $token=(string)($options['upload_id']??'');
+            if (!preg_match('/^[a-f0-9]{24}$/D',$token)) throw new RuntimeException('Invalid uploaded Java archive reference.');
+            $staged=manager_base().'/uploads/'.$token.'.bin';
+            if (!is_file($staged)||is_link($staged)||filesize($staged)>536870912) {
+                throw new RuntimeException('Java upload not found or exceeds 512 MiB.');
+            }
+            if (!hash_equals($asset['sha256'],(string)hash_file('sha256',$staged))) {
+                throw new RuntimeException('Uploaded Java archive differs from current official Temurin '.$major.' '.$asset['architecture'].' checksum.');
+            }
+            if (!copy($staged,$archive)) throw new RuntimeException('Could not stage uploaded Java archive.');
+            @unlink($staged);
+        } else {
+            worker_download_java_archive($asset['url'],$asset['sha256'],$archive);
+        }
+        worker_progress(45,'Verifying Java archive and CPU architecture');
         [$exit,$list]=worker_exec([$tar,'-tzf',$archive],8388608);
         if ($exit!==0 || $list==='') throw new RuntimeException('Unable to inspect the Java archive.');
         $files=explode("\n",$list);
@@ -112,6 +164,7 @@ function worker_install_java(int $major): array {
                 str_contains($entry,'\\') || preg_match('~(^|/)\.\.(/|$)~',$entry) ||
                 preg_match('/[\x00-\x1f]/',$entry)) throw new RuntimeException('Unsafe JRE archive pathname.');
         }
+        worker_progress(65,'Extracting verified Linux Java runtime');
         $extract=$stage.'/extract';mkdir($extract,0700);
         [$exit,$out]=worker_exec([$tar,'-xzf',$archive,'-C',$extract],4096);
         if ($exit!==0) throw new RuntimeException('JRE extraction failed: '.substr($out,0,350));
@@ -123,7 +176,9 @@ function worker_install_java(int $major): array {
         if (!$source || !$binary || !str_starts_with($binary,$source.DIRECTORY_SEPARATOR)) {
             throw new RuntimeException('JRE executable escapes its directory.');
         }
+        worker_java_validate_binary_arch($binary,$asset['architecture']);
         @chmod($binary,0755);
+        worker_progress(83,'Validating installed Java major version');
         $runtime=worker_java_version($binary);
         if ($runtime['major']!==$major || $runtime['code']!==0) {
             throw new RuntimeException('Downloaded Java runtime did not execute or reports an unexpected major version.');

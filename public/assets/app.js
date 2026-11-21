@@ -118,3 +118,39 @@ document.addEventListener('DOMContentLoaded', () => {
   refresh();
   setInterval(refresh, 5000);
 });
+
+
+// Refresh the selected management job every three seconds until it finishes.
+document.addEventListener('DOMContentLoaded', () => {
+  const original = document.querySelector('[data-manager-job]');
+  if (!original) return;
+  let loading = false;
+  const fetchJob = async () => {
+    if (document.hidden || loading) return;
+    const current = document.querySelector('[data-manager-job]');
+    if (!current || !['queued', 'running'].includes(current.dataset.jobState)) return;
+    loading = true;
+    try {
+      const url = new URL('index.php', window.location.href);
+      url.searchParams.set('tab', 'manager');
+      url.searchParams.set('job', original.dataset.managerJob);
+      const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok) throw new Error('Job refresh failed');
+      const parsed = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const refreshed = parsed.querySelector('[data-manager-job]');
+      if (refreshed && refreshed.dataset.managerJob === original.dataset.managerJob) {
+        current.replaceWith(document.importNode(refreshed, true));
+      }
+    } catch (error) {
+      // The existing result stays visible; manual refresh remains available.
+    } finally { loading = false; }
+  };
+  const interval = setInterval(() => {
+    const panel = document.querySelector('[data-manager-job]');
+    if (!panel || !['queued', 'running'].includes(panel.dataset.jobState)) {
+      clearInterval(interval); return;
+    }
+    fetchJob();
+  }, 3000);
+  fetchJob();
+});

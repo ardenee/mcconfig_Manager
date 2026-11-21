@@ -9,10 +9,11 @@ The generic PHP application is the **primary distribution**. The optional DSM 7.
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** adopt existing installations with host-mounted Minecraft data. For new servers, the installer supports native Java **Vanilla and Paper**, or supported Java and Bedrock images through Docker/Container Manager.
 - **Server lifecycle:** start, stop, restart, status, guarded uninstall and independent Linux native-server supervision. Native servers can survive a PHP management-worker restart and can recover their saved desired running state after reboot. Imported Java processes can use localhost-only RCON when configured. Imported containers retain external ownership.
-- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Per-server command input and auto-refreshing output support native supervised stdin, Java container RCON, Bedrock container send-command, and localhost-only RCON for externally started native Java.
+- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Detailed Container Manager/Docker CLI/socket ownership diagnostics help distinguish a running DSM package from actual Docker daemon authorization. Management job results refresh every 3 seconds while queued/running. Per-server console supports supervised native stdin, Java container RCON, Bedrock container send-command and localhost-only RCON for externally started Java.
 - **Updates:** official Mojang and stable PaperMC version lookup; SHA-verified JAR downloads for native Vanilla/Paper, with backup. Container image refresh and recreation are administrator-initiated and restricted to manager-created containers.
-- **Java management:** detect installed Java and install side-by-side **Eclipse Temurin JRE 17, 21 or 25** on supported Linux hosts; check Minecraft/Java version compatibility. System Java packages are not replaced.
-- **Existing mcconfig features:** edit server.properties preserving comments and other keys, manage Java ops/whitelist/bans (including UUID JSON), Bedrock allowlist and XUID permissions, edit supported Bukkit/Spigot/Paper YAML, import/export worlds, view file logs and upload a JAR.
+- **Java management:** detect installed Java and install side-by-side Eclipse Temurin JRE **17, 21 or 25** via official latest-release dropdown, official HTTPS archive URL, or manual .tar.gz upload. Every method verifies the upstream SHA-256 and Linux ELF x64/ARM64 architecture. DSM system Java is left untouched.
+- **Plugins:** per-server Bukkit/Paper-compatible plugin inventory, install by uploaded JAR or direct Modrinth CDN URL plus SHA-256, and remove while retaining a private recovery copy. The server must be stopped; Minecraft loads plugins on restart. Fabric/Forge mods and Bedrock add-ons need separate installers.
+- **Existing mcconfig features:** edit server.properties preserving comments, manage Java ops/whitelist/bans (including UUID JSON), Bedrock allowlist/XUID permissions, supported Bukkit/Spigot/Paper YAML, import/export worlds, view file logs and upload a server JAR.
 - **Recovery and safety:** administrator login and CSRF; HMAC-authenticated queue; no arbitrary shell controls; file backups and verified downloads. Queue cancellation is safe only before execution. Interrupted jobs are marked failed without destructive automatic replay; interrupted restore swaps recover the original server directory.
 - **Backup and restoration:** independent SHA-256-verified ZIP snapshots, full world and configuration restoration through a staged folder swap, a pre-restore safety backup, retention controls (3–30) and preservation of executable file permissions. Restore requires the server to be stopped.
 
@@ -20,7 +21,7 @@ Minecraft itself is not bundled.
 
 ## Requirements
 
-**Web interface:** PHP 8.2 or newer with session, zip and zlib, writable private application storage, and read/write access to the selected Minecraft directories.
+**Web interface:** PHP 8.2 or newer with session, zip and zlib, writable private application storage, and read/write access to Minecraft directories. Large uploads depend on Web Station's PHP profile and HTTP server limits; the DSM package requests 512M upload / 520M POST settings, but existing profiles and front-end limits must be checked.
 
 **Optional local worker:** PHP 8.2+ CLI with zip, zlib and proc_open; Linux native persistence additionally requires util-linux setsid -f. OS support for Java/native processes and Docker CLI/daemon access are needed for container control. Docker is not required to manage native servers. A Docker-enabled worker can effectively administer host containers; grant access deliberately and only on a trusted NAS. Shared web hosting without a persistent CLI process still supports the file-management features.
 
@@ -29,7 +30,7 @@ Minecraft itself is not bundled.
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.0.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.5.1.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Add server** for existing local Minecraft data, or **Server Manager** for discovery/install/lifecycle.
 
@@ -53,8 +54,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.5.0.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.0.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.5.1.zip — generic web deployment
+- dist/mcmanager-DSM7-0.5.1.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip and zlib. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 
@@ -80,6 +81,9 @@ Bedrock containers use the equivalent host path and, where needed, a separate Be
 - **Container permissions are powerful.** Do not expose Docker socket access to the PHP web process or give unrestricted root credentials to an HTTP endpoint. Running the CLI worker with Docker access requires an intentional NAS permissions decision.
 - **Monitoring has scope limits.** CPU and RAM counters depend on host OS/permissions. The player count probe requires the local server protocol and port to respond. Container stdout/stderr is still viewed in DSM Container Manager.
 - **Console is not a system terminal.** It accepts one Minecraft command at a time, never OS commands. Java containers require the itzg image's local RCON helper; Bedrock containers require its send-command helper. For imported native Java, RCON must be configured and reachable via 127.0.0.1. Native Bedrock outside the worker does not expose an equivalent RCON interface. Console output is a bounded recent-log view, not a persistent SSH/TTY session.
+- **Plugin safety:** Plugin JARs execute arbitrary Java code inside Minecraft, not a sandbox. SHA-256 checks transfer integrity, not whether a plugin author is trustworthy. Plugins are not auto-updated, and dependencies/version compatibility are not automatically resolved. Install or remove plugins only while the server is stopped.
+- **Java source restrictions:** Uploaded/downloaded JREs must match the current official Temurin release for the chosen major and NAS CPU. Unsupported/older archives are refused rather than installed without verified publisher metadata.
+- **Docker access:** Synology Container Manager is the Docker package, but the mcconfig package account does not automatically have permission to access its daemon. Diagnostics show the CLI, socket ownership and worker identity. Granting Docker socket access is effectively host administration and is not automatically changed by the installer.
 - **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace or cross-host migrations** is currently implemented.
 - **Backups:** v0.5.0 uses integrity-checked ZIP snapshots. Previous .tar.gz backup archives remain on disk but are not imported into the new restore interface. Snapshots require extra free disk space. Symlinks are rejected; imported Linux server roots with different ownership cannot be restored by the unprivileged worker. Synology ACLs are not preserved as part of a ZIP snapshot, so validate permissions before restoring external or shared-volume Minecraft data.
 - **Uninstallation:** by default, managed server data is retained. Optional permanent deletion requires an exact name match and only applies to folders created/owned by mcmanager.

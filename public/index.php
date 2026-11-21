@@ -4,6 +4,8 @@ if (PHP_VERSION_ID < 80200) { http_response_code(500); exit('mcconfig requires P
 require dirname(__DIR__) . '/src/App.php';
 require dirname(__DIR__) . '/src/Manager.php';
 require dirname(__DIR__) . '/src/Console.php';
+require dirname(__DIR__) . '/src/Uploads.php';
+require dirname(__DIR__) . '/src/Plugins.php';
 ini_set('session.use_strict_mode', '1');
 ini_set('session.cookie_httponly', '1');
 ini_set('session.cookie_samesite', 'Lax');
@@ -26,7 +28,7 @@ $config = app_config();
 $installed = isset($config['password_hash']) && is_string($config['password_hash']);
 $authenticated = $installed && ($_SESSION['authenticated'] ?? false) === true;
 $tab = request_string($_GET, 'tab', 32);
-$tabs = ['manager'=>'Server Manager', 'overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'console'=>'Console', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
+$tabs = ['manager'=>'Server Manager', 'overview'=>'Overview', 'properties'=>'Server properties', 'players'=>'Players & access', 'files'=>'Config files', 'worlds'=>'Worlds', 'logs'=>'Server logs', 'plugins'=>'Plugins', 'console'=>'Console', 'jar'=>'JAR management', 'settings'=>'Settings', 'about'=>'About'];
 if (!isset($tabs[$tab])) $tab = 'overview';
 $message = (string)($_SESSION['flash'] ?? '');
 unset($_SESSION['flash']);
@@ -81,7 +83,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $major=(int)request_string($_POST,'major',2);
             if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Choose Java 17, 21 or 25.');
-            $job=manager_enqueue('install_java',['major'=>$major]);
+            $source=request_string($_POST,'source',12);
+            if (!in_array($source,['catalog','url','upload'],true)) throw new InvalidArgumentException('Invalid Java installation method.');
+            $options=['major'=>$major,'source'=>$source];
+            if ($source==='url') {
+                $options['url']=request_string($_POST,'url',1500);
+                if (!str_starts_with($options['url'],'https://')) throw new InvalidArgumentException('Use an HTTPS URL from official Adoptium Temurin.');
+            }
+            if ($source==='upload') {
+                $uploaded=manager_upload_file($_FILES['java_archive']??[], 'java');
+                $options['upload_id']=$uploaded['upload_id'];
+                $options['sha256']=$uploaded['sha256'];
+            }
+            $job=manager_enqueue('install_java',$options);
+            redirect('manager','&job='.$job);
+        }
+        if (in_array($action,['plugin_upload','plugin_url','plugin_remove'],true)) {
+            if (!manager_online()) throw new RuntimeException('Plugin management requires the local worker.');
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            if (!isset($config['servers'][$serverId]) || !plugin_supported($config['servers'][$serverId])) {
+                throw new RuntimeException('The selected Minecraft server does not support Bukkit/Paper plugins.');
+            }
+            $params=[];
+            if ($action==='plugin_upload') {
+                $upload=manager_upload_file($_FILES['plugin_jar']??[], 'plugin');
+                $params=['source'=>'upload','filename'=>plugin_jar_name($upload['filename']),
+                    'upload_id'=>$upload['upload_id'],'sha256'=>$upload['sha256']];
+            } elseif ($action==='plugin_url') {
+                $params=['source'=>'url',
+                    'filename'=>plugin_jar_name(request_string($_POST,'filename',116)),
+                    'url'=>request_string($_POST,'url',1200),
+                    'sha256'=>strtolower(request_string($_POST,'sha256',64))];
+                if (!preg_match('/^[a-f0-9]{64}$/D',$params['sha256'])) {
+                    throw new InvalidArgumentException('A complete SHA-256 checksum is required for plugin URL downloads.');
+                }
+            } else {
+                $params=['filename'=>plugin_jar_name(request_string($_POST,'filename',116))];
+            }
+            $job=manager_enqueue($action==='plugin_remove'?'remove_plugin':'install_plugin',$params,$serverId);
+            $_SESSION['server_id']=$serverId;
             redirect('manager','&job='.$job);
         }
         if ($action === 'console_send') {
@@ -98,6 +138,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 exit;
             }
             redirect('console','&job='.$job);
+        }
+        if ($action === 'manager_unregister_failed') {
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            if (!isset($config['servers'][$serverId]) ||
+                ($config['servers'][$serverId]['install_state']??'')!=='failed') {
+                throw new RuntimeException('Only failed provisioning entries may be unregistered this way.');
+            }
+            unset($config['servers'][$serverId]);
+            save_config($config);
+            $_SESSION['flash']='Failed server registration removed. Existing partial server files and containers have not been deleted.';
+            redirect('manager');
         }
         if ($action === 'manager_cancel_job') {
             $job=request_string($_POST,'job_id',24);
@@ -152,7 +203,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $options=manager_install_input($_POST);
             foreach (($config['servers']??[]) as $existing) {
-                if (($existing['port']??null)===$options['port'] &&
+                if (($existing['install_state']??'ready')!=='failed' &&
+                    ($existing['port']??null)===$options['port'] &&
                     ($existing['edition']??'java')===$options['edition']) {
                     throw new RuntimeException('A registered server is already using this edition and port.');
                 }
@@ -472,7 +524,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
       $worlds = list_worlds($server);
       [$logname, $log] = log_text($server);
     ?>
-    <?php if ($tab === 'console'): ?>
+    <?php if ($tab === 'plugins'): ?>
+      <?php require dirname(__DIR__).'/src/PluginsView.php'; ?>
+    <?php elseif ($tab === 'console'): ?>
       <?php require dirname(__DIR__).'/src/ConsoleView.php'; ?>
     <?php elseif ($tab === 'overview'): ?>
       <div class="metrics"><?php
