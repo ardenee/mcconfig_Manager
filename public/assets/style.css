@@ -103,3 +103,16 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-docker-warning details{margin:10px 0}
 .mc-docker-warning summary{cursor:pointer;font-weight:700}
 .mc-docker-warning code{overflow-wrap:anywhere}
+
+/* Docker admin permission guide: concise in summary, actionable on expand. */
+.mc-docker-guide{margin-top:10px;border-top:1px solid #decf92;padding-top:9px}
+.mc-docker-guide summary{cursor:pointer;font-weight:700}
+.mc-docker-guide[open] summary{margin-bottom:10px}
+.mc-docker-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:10px 0 12px}
+.mc-docker-facts>div{display:flex;flex-direction:column;gap:2px;background:rgba(255,255,255,.6);border:1px solid #e7dba7;border-radius:7px;padding:7px 10px;min-width:0}
+.mc-docker-facts span{font-size:11px;opacity:.8}
+.mc-docker-facts code{font-size:12px;overflow-wrap:anywhere}
+.mc-docker-guide ol{padding-left:22px;line-height:1.45}
+.mc-docker-guide li{margin-bottom:11px}
+.mc-docker-commands{margin:7px 0;padding:9px 12px;overflow-x:auto;background:#17253c;color:#f2f5ff;border-radius:7px;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+@media(max-width:640px){.mc-docker-facts{grid-template-columns:1fr}}

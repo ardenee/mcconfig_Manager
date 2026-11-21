@@ -8,6 +8,7 @@ The generic PHP application is the **primary distribution**. The optional DSM 7.
 
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** adopt existing installations with host-mounted Minecraft data. Native new installs support Java **Vanilla and Paper** without Docker. Docker/Container Manager is optional and **disabled until the package worker proves it can access the Docker daemon**; no Bedrock/container install or import is offered while the socket is inaccessible. Supported manually created `itzg/minecraft-server` or `itzg/minecraft-bedrock-server` containers can be adopted after verifying the expected `/data` host bind mount, but they still require Docker API permission for start/stop/console/logs. Granting the package user Docker socket access is equivalent to NAS host administration, must be an explicit administrator decision, and may require restoring group ownership/access after DSM or Container Manager restarts. mcmanager never makes the socket world-writable.
+- **Docker administrator permission guide:** when Container Manager is installed but the restricted DSM package worker cannot reach Docker, Server Manager identifies the required read/write permission on `/var/run/docker.sock`, reports the live worker account, socket group, permission mode and group membership, and provides an expandable SSH verification guide. It distinguishes missing Docker CLI, root-owned socket groups, missing group membership, insufficient group permissions and daemon/ACL problems. Socket access is effectively root-level NAS control; no permissions are changed automatically, and unsafe world-writable sockets or joining the root group are not recommended.
 - **Native Java launch settings:** per-server initial and maximum JVM heap (Xms/Xmx), validated optional JVM flags (including the explicitly approved Java 25 `--enable-native-access=ALL-UNNAMED` to suppress JNA warnings), and a private server-local Netty JNI work directory to avoid Synology systems whose `/tmp` disallows executable libraries. Native access is opt-in and does not suppress unrelated `sun.misc.Unsafe` deprecation warnings. Settings apply on the next start; no running server is interrupted. Newly installed native Java servers can set these at creation. Container memory remains a Docker/container limit.
 - **Server lifecycle:** start, stop, restart, status, guarded uninstall and independent Linux native-server supervision. Native servers can survive a PHP management-worker restart and can recover their saved desired running state after reboot. Imported Java processes can use localhost-only RCON when configured. Imported containers retain external ownership.
 - **Server logs:** the Logs page offers an authenticated, confirmation-protected **Clear logs** action for stopped Minecraft servers. It moves recognised `.log` and `.log.gz` files to private recovery storage; no world, properties or plugin files are changed. Minecraft 26.3 may log an idle pause after 60 seconds without players; that is not a process failure. Set `pause-when-empty-seconds=0` in server.properties if the simulation must continue. DSM may omit `/etc/os-release` and `/etc/lsb-release`; the messages alone are not fatal.
@@ -35,7 +36,7 @@ Minecraft itself is not bundled.
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.5.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.5.6.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Register an existing Minecraft server** only to attach an existing folder; it does not install Minecraft or create properties. Use **Server Manager > Install a new Minecraft server** to provision a new instance, then install the required Java runtime. The JAR management tab can install a verified native Java server JAR into a registered directory.
 
@@ -59,8 +60,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.5.5.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.5.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.5.6.zip — generic web deployment
+- dist/mcmanager-DSM7-0.5.6.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip and zlib. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 

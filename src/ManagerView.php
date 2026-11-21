@@ -18,6 +18,8 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   </div>
   <?php if (!$workerOnline): ?>
     <div class="alert warning">The management service is offline; status information and server controls may not be available. Start mcconfig in DSM Package Center.</div>
+  <?php elseif (!$dockerAvailable): ?>
+    <p class="hint">Container Manager control is not enabled for this worker. To use Bedrock or container servers, expand <strong>Create a Minecraft server</strong> below for the Docker permission requirements and administrator setup guide.</p>
   <?php endif; ?>
   <details class="mc-worker-tools">
     <summary>Diagnostics and server discovery</summary>
@@ -259,21 +261,46 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 
 
-<details class="mc-feature-group" <?php if (!$all): ?>open<?php endif; ?>>
+<details id="mc-create-server" class="mc-feature-group" <?php if (!$all): ?>open<?php endif; ?>>
 <summary>Create a Minecraft server</summary>
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
-  <?php if (!$dockerAvailable): ?>
+  <?php if (!$dockerAvailable):
+    $dockerGuide=manager_docker_permission_advice($dockerAccess);
+    $dockerUser=(string)($dockerAccess['user']??'mcconfig');
+    $dockerBin=(string)($dockerAccess['binary']??'docker');
+    if (!preg_match('~^/?[A-Za-z0-9_./-]+$~D',$dockerBin)) $dockerBin='docker';
+    if (!preg_match('/^[A-Za-z0-9_@.-]+$/D',$dockerUser)) $dockerUser='mcconfig';
+  ?>
     <div class="mc-docker-warning alert warning">
-      <strong>Container installation unavailable</strong>
+      <strong>Container installation unavailable: Docker permission required</strong>
       <p><?= h($dockerAccess['message']) ?></p>
-      <p class="hint">Java Vanilla/Paper can be installed natively without Docker. Bedrock and other container implementations require the mcconfig worker to connect to Docker. Installing a container manually will not permit mcmanager to control it without the same access. The package does not change Docker's privileged socket permissions automatically.</p>
-      <details><summary>How to enable Container Manager integration</summary>
-        <p>On the NAS, an administrator must grant the mcconfig <em>service user</em> access to Container Manager's Docker socket through a restricted membership/ownership arrangement and arrange for that access to survive DSM service restarts. Docker socket access is equivalent to full NAS administration. Never use <code>chmod 666</code>, or expose the daemon over an unauthenticated network port.</p>
-        <p>First check <code>ls -l /var/run/docker.sock</code> and the service identity with <code>id mcconfig</code> (or the actual worker username shown below). An administrator can test access with <code>sudo -u &lt;worker-user&gt; docker version</code>. Then restart the mcconfig package and refresh its status. Do not guess at group ownership: inspect the socket first.</p>
-        <?php if (!empty($dockerAccess['user'])): ?><p class="hint">Worker: <code><?= h($dockerAccess['user']) ?></code> · Socket: <code><?= h($dockerAccess['socket']??'unknown') ?></code></p><?php endif; ?>
+      <p><strong>Required permission:</strong> The mcmanager service account needs <strong>read and write access</strong> to the Docker daemon socket at <code>/var/run/docker.sock</code>.</p>
+      <p><strong>What to check:</strong> <?= h($dockerGuide['message']) ?></p>
+      <details class="mc-docker-guide">
+        <summary>Administrator guide: enable Container Manager access</summary>
+        <div class="mc-docker-facts">
+          <div><span>Service account</span><code><?= h($dockerUser) ?></code></div>
+          <div><span>Socket group</span><code><?= h((string)($dockerAccess['socket_group']??'Not detected')) ?></code></div>
+          <div><span>Socket permissions</span><code><?= h((string)($dockerAccess['socket_mode']??'Not detected')) ?></code></div>
+          <div><span>Member of socket group</span><strong><?= isset($dockerAccess['socket_gid'])?(!empty($dockerAccess['worker_in_socket_group'])?'Yes':'No'):'Not detected' ?></strong></div>
+        </div>
+        <ol>
+          <li>Connect to the NAS using SSH with a DSM administrator account. Inspect the <em>actual</em> socket ownership and group membership:
+            <pre class="mc-docker-commands">sudo ls -l /var/run/docker.sock
+id <?= h($dockerUser) ?></pre>
+          </li>
+          <li>After reviewing the security implications, arrange for this <em>package service account</em> to belong to the socket's approved access group, with group read/write access. If the socket group is <code>root</code>, <strong>do not add the service account to the root group</strong>. Use an administrator-configured, dedicated restricted Docker socket group instead. Follow the NAS's supported group and service configuration process; do not guess the group name.</li>
+          <li>Restart the mcconfig package so its worker inherits the updated group membership. Confirm access as the service account:
+            <pre class="mc-docker-commands">sudo -u <?= h($dockerUser) ?> <?= h($dockerBin) ?> version</pre>
+            Then reload Server Manager. Container options will appear automatically after a successful permission check.
+          </li>
+        </ol>
+        <p class="hint"><strong>Security:</strong> Docker socket access grants root-equivalent control over the NAS. mcmanager will never change socket ownership or permissions automatically. Never use <code>chmod 666</code> or an unauthenticated network Docker endpoint. Container Manager/DSM updates can reset socket access; recheck after upgrades.</p>
+        <p class="hint"><a href="https://docs.docker.com/engine/install/linux-postinstall/" target="_blank" rel="noopener noreferrer">Docker documentation: socket group privileges</a></p>
       </details>
+      <p class="hint">Native Java Vanilla/Paper is still available. Bedrock and other container types require Docker access even if the container was installed manually.</p>
     </div>
   <?php endif; ?>
   <form method="post" class="manager-install">
