@@ -41,6 +41,7 @@ function worker_native_java_command(string $id,string $path,array $meta,string $
         'xms'=>$meta['xms']??256,
         'memory'=>$meta['memory']??2048,
         'jvm_args'=>$meta['jvm_args']??'',
+        'native_access'=>!empty($meta['native_access'])?'1':'0',
         'netty_workdir'=>(!array_key_exists('netty_workdir',$meta)||$meta['netty_workdir'])?'1':'0'
     ]);
     $argv=[$java,'-Xms'.$settings['xms'].'M','-Xmx'.$settings['memory'].'M'];
@@ -51,6 +52,10 @@ function worker_native_java_command(string $id,string $path,array $meta,string $
         } else {
             $argv[]='-Dio.netty.native.workdir='.$dir;
         }
+    }
+    if ($settings['native_access'] &&
+        !in_array('--enable-native-access=ALL-UNNAMED',startup_arguments($settings['jvm_args']),true)) {
+        $argv[]='--enable-native-access=ALL-UNNAMED';
     }
     foreach(startup_arguments($settings['jvm_args']) as $flag) $argv[]=$flag;
     array_push($argv,'-jar',$jar,'nogui');

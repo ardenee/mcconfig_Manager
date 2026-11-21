@@ -19,6 +19,7 @@ require __DIR__.'/BackupRestore.php';
 require __DIR__.'/Supervisor.php';
 require __DIR__.'/Recovery.php';
 require __DIR__.'/Startup.php';
+require __DIR__.'/PaperMigration.php';
 
 function worker_write(string $file,array $value): void {
     $signed=json_encode(manager_sign($value),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
@@ -698,6 +699,9 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
         return worker_state($id,['state'=>$state,'software'=>$meta['software']??'unknown',
             'version'=>$meta['version']??'unknown','build'=>$meta['build']??'',
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
+    }
+    if ($op==='switch_to_paper') {
+        return worker_switch_to_paper($id,$row,$path,$meta,$state,(string)($params['confirm_name']??''));
     }
     if ($op==='configure_startup') return worker_configure_startup($id,$path,$meta,$params);
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);

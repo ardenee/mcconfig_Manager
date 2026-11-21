@@ -6,73 +6,200 @@ $requestedJob=$_GET['job']??'';
 $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$requestedJob)
     ? manager_result($requestedJob):null;
 ?>
-<section class="panel">
-  <div class="panel-title"><div><h2>Local management worker</h2>
-    <p class="muted">Process and container operations are handled by a separate, restricted PHP CLI service.</p></div>
-    <strong><?= $workerOnline?'Online':'Offline' ?></strong></div>
+<section class="panel mc-worker-panel">
+  <div class="mc-worker-row">
+    <div><h2>Server Manager</h2><p class="hint">Manage your Minecraft servers from one place.</p></div>
+    <div class="mc-worker-summary">
+      <span data-worker-status class="mc-status mc-status--<?= $workerOnline?'running':'warning' ?>" role="status">Management service <?= $workerOnline?'online':'offline' ?></span>
+      <?php if ($selectedJob): ?><a class="subtle" href="#mc-selected-job">View selected job: <?= h($selectedJob['state']??'queued') ?></a><?php endif; ?>
+    </div>
+  </div>
   <?php if (!$workerOnline): ?>
-    <div class="alert warning">The background worker is not running. You can still edit configurations. On DSM, use Package Center to start the package and check the PHP CLI path and agent logs.</div>
-  <?php else: ?><p class="hint">PHP <?= h($workerInfo['php']??'') ?> · Process ID <?= h($workerInfo['pid']??'') ?> · Last response <?= h(date('H:i:s',(int)$workerInfo['timestamp'])) ?></p><?php endif; ?>
-  <form method="post" class="inline-form"><?php hidden_csrf(); ?>
-    <button name="action" value="manager_diagnostics" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Check hardware & Java</button>
-    <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Discover existing servers</button>
-  </form>
+    <div class="alert warning">The management service is offline; status information and server controls may not be available. Start mcconfig in DSM Package Center.</div>
+  <?php endif; ?>
+  <details class="mc-worker-tools">
+    <summary>Diagnostics and server discovery</summary>
+    <p class="hint">PHP <?= h($workerInfo['php']??'not available') ?> · Last check <?= h(!empty($workerInfo['timestamp'])?date('H:i:s',(int)$workerInfo['timestamp']):'none') ?></p>
+    <form method="post" class="inline-form"><?php hidden_csrf(); ?>
+      <button name="action" value="manager_diagnostics" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Check hardware and Java</button>
+      <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Find existing servers</button>
+    </form>
+  </details>
 </section>
 
-<section class="panel spaced">
-  <div class="panel-title"><div><h2>Java runtime management</h2>
-    <p class="muted">Install a managed Eclipse Temurin JRE without replacing DSM's system Java. Every method verifies the official SHA-256 and the executable's Linux CPU architecture.</p></div>
-    <strong><?= h(php_uname('m')) ?></strong>
-  </div>
-  <div class="manager-install-options">
-    <div class="manager-method">
-      <h3>1. Known official downloads</h3>
-      <p class="hint">Latest official JRE for this NAS. The worker resolves its current upstream download link and SHA-256.</p>
-      <form method="post">
-        <?php hidden_csrf(); ?>
-        <input type="hidden" name="action" value="manager_install_java">
-        <input type="hidden" name="source" value="catalog">
-        <label>Temurin release
-          <select name="major">
-            <option value="25">Temurin 25 LTS — latest Minecraft</option>
-            <option value="21" selected>Temurin 21 LTS — Minecraft 1.20.5–1.21.x</option>
-            <option value="17">Temurin 17 LTS — older Java servers</option>
-          </select>
-        </label>
-        <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+
+<section class="panel spaced" data-manager-servers>
+  <h2>Your Minecraft servers</h2>
+  <p class="hint">Green = running, red = stopped, yellow = needs attention or a status check. Select a server below; maintenance options are collapsed until needed.</p>
+  <?php if (!$all): ?><p class="empty">No Minecraft servers registered yet. Install one below, or import an existing server from discovery or Settings.</p><?php endif; ?>
+  <?php foreach($all as $id=>$row):
+    $state=manager_running_state((string)$id);
+    $pending=($row['install_state']??'')==='pending';
+    $health=manager_server_status($row,$state,$workerOnline);
+    $status=$health['label'];
+    $software=$row['software']??($row['edition']??'java');
+    $detected=(($row['edition']??'java')==='java' && is_dir((string)($row['path']??'')))?
+        jar_detect_version($row):['version'=>'','source'=>''];
+    $shownVersion=$detected['version'] ?: (string)($state['version']??($row['version']??''));
+    ?>
+    <div class="server-manager-item mc-server-card" data-server-card="<?= h($id) ?>">
+      <div class="panel-title mc-server-heading"><div><h3><?= h($row['name']??$id) ?></h3>
+        <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · Minecraft <?= h($shownVersion?:'version not detected') ?></p>
+
+      </div><span data-server-status class="mc-status mc-status--<?= h($health['tone']) ?>" role="status" title="<?= h($health['hint']) ?>"><?= h($status) ?></span></div>
+      <div class="mc-primary-actions" data-server-actions>
+        <?php if ($workerOnline && !$pending && ($row['install_state']??'ready')!=='failed'): ?>
+          <?php if ($health['stopped']): ?>
+            <form method="post" class="inline-form">
+              <?php hidden_csrf(); ?>
+              <input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <button class="mc-action-start" name="operation" value="start">Start server</button>
+            </form>
+          <?php elseif ($health['running']): ?>
+            <form method="post" class="inline-form">
+              <?php hidden_csrf(); ?>
+              <input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <button class="subtle" name="operation" value="stop">Stop</button>
+              <button class="subtle" name="operation" value="restart" data-confirm="Restart this Minecraft server now?">Restart</button>
+            </form>
+          <?php else: ?>
+            <form method="post" class="inline-form">
+              <?php hidden_csrf(); ?>
+              <input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <button class="subtle" name="operation" value="status">Check status</button>
+            </form>
+          <?php endif; ?>
+        <?php endif; ?>
+        <a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Console</a>
+        <a class="subtle" href="?tab=properties&amp;server=<?= h($id) ?>">Properties</a>
+        <?php if (($row['edition']??'java')==='java'): ?><a class="subtle" href="?tab=plugins&amp;server=<?= h($id) ?>">Plugins</a><?php endif; ?>
+      </div>
+      <details class="mc-server-detail">
+        <summary>Details, updates and maintenance</summary>
+        <p class="hint">Server storage: <code><?= h($row['path']??'') ?></code></p>
+        <?php if ($detected['source']!==''): ?><p class="hint">Minecraft version source: <?= h($detected['source']) ?></p><?php endif; ?>
+        <?php if (($row['deployment']??'native')==='native'): ?>
+          <p class="hint">Automatic restart recovery: <?= manager_native_resume_requested((string)$id)?'Enabled':'Not requested' ?></p>
+        <?php endif; ?>
+      <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
+        <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>
+      <?php endif; ?>
+      <?php if (isset($state['cpu_percent']) || isset($state['memory_mib']) || isset($state['memory'])): ?>
+        <p class="muted">CPU <?= h($state['cpu_percent']??'–') ?><?= isset($state['cpu_percent']) && is_numeric($state['cpu_percent'])?'%':'' ?> · RAM <?= h($state['memory']??(isset($state['memory_mib'])?$state['memory_mib'].' MiB':'Unavailable')) ?></p>
+      <?php endif; ?>
+      <?php if (($row['install_state']??'')==='failed'): ?>
+        <p class="hint">Provisioning failed. Review the job error, install a compatible Java runtime if needed, then create a new server. Partial files or containers may require manual inspection.</p>
+        <form method="post" class="inline-form" data-confirm="Unregister this failed server? Partial files or containers will be preserved for inspection.">
+          <?php hidden_csrf(); ?>
+          <input type="hidden" name="action" value="manager_unregister_failed">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <button class="subtle danger-text">Unregister failed entry (keep files)</button>
+        </form>
+      <?php elseif (!$pending && $workerOnline): ?>
+      <form method="post" class="inline-form mc-secondary-actions">
+        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+        <input type="hidden" name="server_id" value="<?= h($id) ?>">
+        <?php foreach(['status'=>'Refresh','adopt'=>'Adopt','check_updates'=>'Check updates','backup'=>'Create backup'] as $operation=>$label): ?>
+          <button class="subtle" name="operation" value="<?= h($operation) ?>"><?= h($label) ?></button>
+        <?php endforeach; ?>
       </form>
-      <p class="hint">Source: <a href="https://adoptium.net/temurin/releases/" target="_blank" rel="noopener noreferrer">Eclipse Adoptium</a>.</p>
-    </div>
-    <div class="manager-method">
-      <h3>2. Download by URL</h3>
-      <p class="hint">Paste an official Adoptium Temurin release URL. The archive must match the current verified release for the selected Java version and architecture.</p>
-      <form method="post">
-        <?php hidden_csrf(); ?>
-        <input type="hidden" name="action" value="manager_install_java">
-        <input type="hidden" name="source" value="url">
-        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
-        <label>Official HTTPS archive URL <input name="url" type="url" required maxlength="1500" placeholder="https://github.com/adoptium/temurin21-binaries/releases/..."></label>
-        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+      <form method="post" class="inline-form spaced-small">
+        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+        <input type="hidden" name="server_id" value="<?= h($id) ?>">
+        <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
+        <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
       </form>
-    </div>
-    <div class="manager-method">
-      <h3>3. Upload Java archive</h3>
-      <p class="hint">Upload the matching official Temurin Linux JRE <code>.tar.gz</code> archive. The worker rejects an incorrect CPU architecture or checksum.</p>
-      <form method="post" enctype="multipart/form-data">
-        <?php hidden_csrf(); ?>
-        <input type="hidden" name="action" value="manager_install_java">
-        <input type="hidden" name="source" value="upload">
-        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
-        <label>Temurin archive <input name="java_archive" type="file" accept=".gz,.tgz,.tar.gz" required></label>
-        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Upload and install</button>
+      <?php if (($row['edition']??'java')==='java' && ($row['deployment']??'native')==='native'): ?>
+      <details class="manager-backups manager-startup">
+        <summary>Startup settings - Java heap and JVM options</summary>
+        <p class="hint">These settings apply on the next server start. A running Minecraft process is not interrupted. Each extra JVM option is passed directly as an argument (not through a shell).</p>
+        <form method="post" class="manager-startup-form">
+          <?php hidden_csrf(); ?>
+          <input type="hidden" name="action" value="manager_startup">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <div class="form-row">
+            <label>Initial heap (Xms), MiB
+              <input name="xms" type="number" min="128" max="32768" required value="<?= h($row['xms']??256) ?>">
+            </label>
+            <label>Maximum heap (Xmx), MiB
+              <input name="memory" type="number" min="512" max="32768" required value="<?= h($row['memory']??2048) ?>">
+            </label>
+          </div>
+          <label>Advanced JVM arguments (one supported flag per line)
+            <textarea name="jvm_args" rows="3" maxlength="1800" placeholder="-XX:+UseG1GC&#10;-XX:MaxGCPauseMillis=200"><?= h($row['jvm_args']??'') ?></textarea>
+          </label>
+          <input type="hidden" name="native_access" value="0">
+          <label class="check"><input type="checkbox" name="native_access" value="1" <?= !empty($row['native_access'])?'checked':'' ?>>
+            Enable native access for trusted Java libraries (Java 25 JNA warning)
+          </label>
+          <input type="hidden" name="netty_workdir" value="0">
+          <label class="check"><input type="checkbox" name="netty_workdir" value="1" <?= !array_key_exists('netty_workdir',$row)||!empty($row['netty_workdir'])?'checked':'' ?>>
+            Use a private Netty native-library directory within this server (recommended on DSM when /tmp is noexec)
+          </label>
+          <button class="subtle" type="submit">Save startup settings</button>
+        </form>
+        <p class="hint">Supported extra flags include G1GC, MaxGCPauseMillis, processor/thread counts, AlwaysPreTouch, encoding and timezone. Heap is configured above; JVM agents, classpath changes and shell commands are not accepted. Native access suppresses the JNA restricted-method warning but does not remove the separate JOML sun.misc.Unsafe deprecation warning. For the "Server empty ... pausing" message, change <code>pause-when-empty-seconds</code> in Server Properties instead.</p>
+      </details>
+      <?php endif; ?>
+      <details class="manager-backups">
+        <summary>Backups and restoration (<?= count(manager_backup_files((string)$id)) ?> snapshots)</summary>
+        <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders. Synology ACLs are not preserved; externally owned/imported folders may require manual permission repair. Older TAR archives are retained but not restored directly.</p>
+        <form method="post" class="inline-form spaced-small">
+          <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_backup_retention">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <label>Retain most recent backup snapshots
+            <select name="backup_keep">
+              <?php foreach([3,5,10,15,20,30] as $keep): ?>
+                <option value="<?= $keep ?>" <?= (int)($row['backup_keep']??10)===$keep?'selected':'' ?>><?= $keep ?></option>
+              <?php endforeach; ?>
+            </select></label>
+          <button class="subtle" type="submit">Save retention</button>
+        </form>
+        <?php foreach(manager_backup_files((string)$id) as $backup): ?>
+          <div class="manager-backup-entry">
+            <div>
+              <strong><?= h($backup['name']) ?></strong>
+              <small><?= h(date('Y-m-d H:i',$backup['created'])) ?> · <?= h(round($backup['size']/1048576,1)) ?> MiB</small>
+            </div>
+            <form method="post" class="inline-form">
+              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
+              <button class="subtle" name="operation" value="verify_backup" <?= !$workerOnline?'disabled':'' ?>>Verify SHA-256</button>
+            </form>
+            <form method="post" class="inline-form" data-confirm="Restore this backup? You must stop the server first. The existing server will be backed up before restoration.">
+              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+              <input type="hidden" name="server_id" value="<?= h($id) ?>">
+              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
+              <label>Confirm exact server name <input type="text" name="confirm_name" required autocomplete="off" placeholder="<?= h($row['name']??'') ?>"></label>
+              <button class="subtle" name="operation" value="restore_backup" <?= !$workerOnline?'disabled':'' ?>>Restore backup</button>
+            </form>
+          </div>
+        <?php endforeach; ?>
+        <?php if (!manager_backup_files((string)$id)): ?>
+          <p class="muted">No verified ZIP snapshots yet. Stop this server and use Backup to create one.</p>
+        <?php endif; ?>
+      </details>
+      <form method="post" class="inline-form spaced-small" data-confirm="Unregister this server? Data deletion, if selected, cannot be undone.">
+        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+        <input type="hidden" name="server_id" value="<?= h($id) ?>">
+        <label>Type exact server name to confirm uninstall <input name="confirm_name" placeholder="<?= h($row['name']??'') ?>" required autocomplete="off"></label>
+        <label class="check"><input type="checkbox" name="delete_data" value="1"> Also delete mcmanager-created data (never imported data)</label>
+        <button class="subtle danger-text" name="operation" value="uninstall">Uninstall / unregister</button>
       </form>
+      <?php elseif (!$workerOnline): ?><p class="hint">Start the local worker to enable lifecycle management.</p>
+      <?php else: ?><p class="hint">Installation is queued or in progress. Use the job list to inspect the result.</p><?php endif; ?>
+      </details>
     </div>
-  </div>
-  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both under DSM Web Station → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Container servers use Java inside their image.</p>
+  <?php endforeach; ?>
 </section>
+
 
 <?php if ($selectedJob): ?>
-<section class="panel spaced" data-manager-job="<?= h($requestedJob) ?>" data-job-state="<?= h($selectedJob['state']??'queued') ?>">
+<section id="mc-selected-job" class="panel spaced" data-manager-job="<?= h($requestedJob) ?>" data-job-state="<?= h($selectedJob['state']??'queued') ?>">
   <div class="panel-title"><div><h2>Job result</h2><p class="hint">Automatically checks every 3 seconds, including after completion. <span data-manager-sync aria-live="polite">Connecting…</span></p></div><a class="subtle" href="?tab=manager&amp;job=<?= h($requestedJob) ?>">Refresh status</a></div>
   <div class="status-line"><span>Operation</span><strong><?= h($selectedJob['operation']??'') ?></strong></div>
   <div class="status-line"><span>State</span><strong><?= h($selectedJob['state']??'') ?></strong></div>
@@ -128,138 +255,10 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 </section>
 <?php endif; ?>
 
-<section class="panel spaced"><h2>Registered Minecraft servers</h2>
-  <?php if (!$all): ?><p class="empty">No Minecraft servers registered yet. Install one below, or import an existing server from discovery or Settings.</p><?php endif; ?>
-  <?php foreach($all as $id=>$row):
-    $state=manager_running_state((string)$id);
-    $pending=($row['install_state']??'')==='pending';
-    $status=$pending?'Provisioning':($state['state']??'Not controlled');
-    $software=$row['software']??($row['edition']??'java');
-    $detected=(($row['edition']??'java')==='java' && is_dir((string)($row['path']??'')))?
-        jar_detect_version($row):['version'=>'','source'=>''];
-    $shownVersion=$detected['version'] ?: (string)($state['version']??($row['version']??''));
-    ?>
-    <div class="server-manager-item">
-      <div class="panel-title"><div><h3><?= h($row['name']??$id) ?></h3>
-        <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · Minecraft <?= h($shownVersion?:'version not detected') ?></p>
-        <?php if ($detected['source']!==''): ?><p class="hint">Version source: <?= h($detected['source']) ?></p><?php endif; ?>
-        <code><?= h($row['path']??'') ?></code>
-      </div><strong><?= h($status) ?></strong></div>
-      <?php if (($row['deployment']??'native')==='native'): ?>
-        <p class="hint">Native recovery preference: <?= manager_native_resume_requested((string)$id)
-          ? 'Resume server after worker/NAS restart (when supported)'
-          : 'No automatic resume requested' ?></p>
-      <?php endif; ?>
-      <p><a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Open console</a>
-      <?php if (plugin_supported($row)): ?> &nbsp; <a class="subtle" href="?tab=plugins&amp;server=<?= h($id) ?>">Manage plugins</a><?php endif; ?></p>
-      <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
-        <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>
-      <?php endif; ?>
-      <?php if (isset($state['cpu_percent']) || isset($state['memory_mib']) || isset($state['memory'])): ?>
-        <p class="muted">CPU <?= h($state['cpu_percent']??'–') ?><?= isset($state['cpu_percent']) && is_numeric($state['cpu_percent'])?'%':'' ?> · RAM <?= h($state['memory']??(isset($state['memory_mib'])?$state['memory_mib'].' MiB':'Unavailable')) ?></p>
-      <?php endif; ?>
-      <?php if (($row['install_state']??'')==='failed'): ?>
-        <p class="hint">Provisioning failed. Review the job error, install a compatible Java runtime if needed, then create a new server. Partial files or containers may require manual inspection.</p>
-        <form method="post" class="inline-form" data-confirm="Unregister this failed server? Partial files or containers will be preserved for inspection.">
-          <?php hidden_csrf(); ?>
-          <input type="hidden" name="action" value="manager_unregister_failed">
-          <input type="hidden" name="server_id" value="<?= h($id) ?>">
-          <button class="subtle danger-text">Unregister failed entry (keep files)</button>
-        </form>
-      <?php elseif (!$pending && $workerOnline): ?>
-      <form method="post" class="inline-form">
-        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-        <input type="hidden" name="server_id" value="<?= h($id) ?>">
-        <?php foreach(['status'=>'Refresh','adopt'=>'Adopt','start'=>'Start','stop'=>'Stop','restart'=>'Restart','check_updates'=>'Check updates','backup'=>'Backup'] as $operation=>$label): ?>
-          <button class="subtle" name="operation" value="<?= h($operation) ?>"><?= h($label) ?></button>
-        <?php endforeach; ?>
-      </form>
-      <form method="post" class="inline-form spaced-small">
-        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-        <input type="hidden" name="server_id" value="<?= h($id) ?>">
-        <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
-        <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
-      </form>
-      <?php if (($row['edition']??'java')==='java' && ($row['deployment']??'native')==='native'): ?>
-      <details class="manager-backups manager-startup">
-        <summary>Startup settings - Java heap and JVM options</summary>
-        <p class="hint">These settings apply on the next server start. A running Minecraft process is not interrupted. Each extra JVM option is passed directly as an argument (not through a shell).</p>
-        <form method="post" class="manager-startup-form">
-          <?php hidden_csrf(); ?>
-          <input type="hidden" name="action" value="manager_startup">
-          <input type="hidden" name="server_id" value="<?= h($id) ?>">
-          <div class="form-row">
-            <label>Initial heap (Xms), MiB
-              <input name="xms" type="number" min="128" max="32768" required value="<?= h($row['xms']??256) ?>">
-            </label>
-            <label>Maximum heap (Xmx), MiB
-              <input name="memory" type="number" min="512" max="32768" required value="<?= h($row['memory']??2048) ?>">
-            </label>
-          </div>
-          <label>Advanced JVM arguments (one supported flag per line)
-            <textarea name="jvm_args" rows="3" maxlength="1800" placeholder="-XX:+UseG1GC&#10;-XX:MaxGCPauseMillis=200"><?= h($row['jvm_args']??'') ?></textarea>
-          </label>
-          <input type="hidden" name="netty_workdir" value="0">
-          <label class="check"><input type="checkbox" name="netty_workdir" value="1" <?= !array_key_exists('netty_workdir',$row)||!empty($row['netty_workdir'])?'checked':'' ?>>
-            Use a private Netty native-library directory within this server (recommended on DSM when /tmp is noexec)
-          </label>
-          <button class="subtle" type="submit">Save startup settings</button>
-        </form>
-        <p class="hint">Supported extra flags include G1GC, MaxGCPauseMillis, processor/thread counts, AlwaysPreTouch, encoding and timezone. Heap is configured above; JVM agents, classpath changes and shell commands are not accepted. For the "Server empty ... pausing" message, change <code>pause-when-empty-seconds</code> in Server Properties instead.</p>
-      </details>
-      <?php endif; ?>
-      <details class="manager-backups">
-        <summary>Backups and restoration (<?= count(manager_backup_files((string)$id)) ?> snapshots)</summary>
-        <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders. Synology ACLs are not preserved; externally owned/imported folders may require manual permission repair. Older TAR archives are retained but not restored directly.</p>
-        <form method="post" class="inline-form spaced-small">
-          <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_backup_retention">
-          <input type="hidden" name="server_id" value="<?= h($id) ?>">
-          <label>Retain most recent backup snapshots
-            <select name="backup_keep">
-              <?php foreach([3,5,10,15,20,30] as $keep): ?>
-                <option value="<?= $keep ?>" <?= (int)($row['backup_keep']??10)===$keep?'selected':'' ?>><?= $keep ?></option>
-              <?php endforeach; ?>
-            </select></label>
-          <button class="subtle" type="submit">Save retention</button>
-        </form>
-        <?php foreach(manager_backup_files((string)$id) as $backup): ?>
-          <div class="manager-backup-entry">
-            <div>
-              <strong><?= h($backup['name']) ?></strong>
-              <small><?= h(date('Y-m-d H:i',$backup['created'])) ?> · <?= h(round($backup['size']/1048576,1)) ?> MiB</small>
-            </div>
-            <form method="post" class="inline-form">
-              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-              <input type="hidden" name="server_id" value="<?= h($id) ?>">
-              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
-              <button class="subtle" name="operation" value="verify_backup" <?= !$workerOnline?'disabled':'' ?>>Verify SHA-256</button>
-            </form>
-            <form method="post" class="inline-form" data-confirm="Restore this backup? You must stop the server first. The existing server will be backed up before restoration.">
-              <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-              <input type="hidden" name="server_id" value="<?= h($id) ?>">
-              <input type="hidden" name="backup_name" value="<?= h($backup['name']) ?>">
-              <label>Confirm exact server name <input type="text" name="confirm_name" required autocomplete="off" placeholder="<?= h($row['name']??'') ?>"></label>
-              <button class="subtle" name="operation" value="restore_backup" <?= !$workerOnline?'disabled':'' ?>>Restore backup</button>
-            </form>
-          </div>
-        <?php endforeach; ?>
-        <?php if (!manager_backup_files((string)$id)): ?>
-          <p class="muted">No verified ZIP snapshots yet. Stop this server and use Backup to create one.</p>
-        <?php endif; ?>
-      </details>
-      <form method="post" class="inline-form spaced-small" data-confirm="Unregister this server? Data deletion, if selected, cannot be undone.">
-        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-        <input type="hidden" name="server_id" value="<?= h($id) ?>">
-        <label>Type exact server name to confirm uninstall <input name="confirm_name" placeholder="<?= h($row['name']??'') ?>" required autocomplete="off"></label>
-        <label class="check"><input type="checkbox" name="delete_data" value="1"> Also delete mcmanager-created data (never imported data)</label>
-        <button class="subtle danger-text" name="operation" value="uninstall">Uninstall / unregister</button>
-      </form>
-      <?php elseif (!$workerOnline): ?><p class="hint">Start the local worker to enable lifecycle management.</p>
-      <?php else: ?><p class="hint">Installation is queued or in progress. Use the job list to inspect the result.</p><?php endif; ?>
-    </div>
-  <?php endforeach; ?>
-</section>
 
+
+<details class="mc-feature-group" <?php if (!$all): ?>open<?php endif; ?>>
+<summary>Create a Minecraft server</summary>
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
@@ -291,6 +290,9 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <label>Advanced JVM flags (one supported flag per line)
         <textarea name="jvm_args" rows="3" maxlength="1800" placeholder="-XX:+UseG1GC&#10;-XX:MaxGCPauseMillis=200"></textarea>
       </label>
+      <input type="hidden" name="native_access" value="0">
+      <label class="check"><input type="checkbox" name="native_access" value="1"> Enable native access for trusted Java libraries (Java 25)
+      </label>
       <input type="hidden" name="netty_workdir" value="0">
       <label class="check"><input type="checkbox" name="netty_workdir" value="1" checked> Use server-local Netty native-library directory (recommended for DSM noexec /tmp)</label>
     </details>
@@ -301,6 +303,66 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <p class="hint">Native managed installation currently supports Java Vanilla and Paper. Containers support the listed Java software or Bedrock, subject to NAS architecture and installed Container Manager. No host Java packages are modified.</p>
 </section>
 
+</details>
+
+<details class="mc-feature-group">
+<summary>Java runtimes and installation</summary>
+<section class="panel spaced">
+  <div class="panel-title"><div><h2>Java runtime management</h2>
+    <p class="muted">Install a managed Eclipse Temurin JRE without replacing DSM's system Java. Every method verifies the official SHA-256 and the executable's Linux CPU architecture.</p></div>
+    <strong><?= h(php_uname('m')) ?></strong>
+  </div>
+  <div class="manager-install-options">
+    <div class="manager-method">
+      <h3>1. Known official downloads</h3>
+      <p class="hint">Latest official JRE for this NAS. The worker resolves its current upstream download link and SHA-256.</p>
+      <form method="post">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="catalog">
+        <label>Temurin release
+          <select name="major">
+            <option value="25">Temurin 25 LTS — latest Minecraft</option>
+            <option value="21" selected>Temurin 21 LTS — Minecraft 1.20.5–1.21.x</option>
+            <option value="17">Temurin 17 LTS — older Java servers</option>
+          </select>
+        </label>
+        <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+      </form>
+      <p class="hint">Source: <a href="https://adoptium.net/temurin/releases/" target="_blank" rel="noopener noreferrer">Eclipse Adoptium</a>.</p>
+    </div>
+    <div class="manager-method">
+      <h3>2. Download by URL</h3>
+      <p class="hint">Paste an official Adoptium Temurin release URL. The archive must match the current verified release for the selected Java version and architecture.</p>
+      <form method="post">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="url">
+        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
+        <label>Official HTTPS archive URL <input name="url" type="url" required maxlength="1500" placeholder="https://github.com/adoptium/temurin21-binaries/releases/..."></label>
+        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Download and install</button>
+      </form>
+    </div>
+    <div class="manager-method">
+      <h3>3. Upload Java archive</h3>
+      <p class="hint">Upload the matching official Temurin Linux JRE <code>.tar.gz</code> archive. The worker rejects an incorrect CPU architecture or checksum.</p>
+      <form method="post" enctype="multipart/form-data">
+        <?php hidden_csrf(); ?>
+        <input type="hidden" name="action" value="manager_install_java">
+        <input type="hidden" name="source" value="upload">
+        <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
+        <label>Temurin archive <input name="java_archive" type="file" accept=".gz,.tgz,.tar.gz" required></label>
+        <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Upload and install</button>
+      </form>
+    </div>
+  </div>
+  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both under DSM Web Station → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Container servers use Java inside their image.</p>
+</section>
+
+</details>
+
+<details class="mc-feature-group" <?php if (manager_queued_jobs()): ?>open<?php endif; ?>>
+<summary>Pending management tasks</summary>
 <section class="panel spaced" data-manager-queued>
   <div class="panel-title"><h2>Queued management jobs</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
   <?php $queued=manager_queued_jobs(); ?>
@@ -318,6 +380,10 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <p class="hint">Running tasks cannot be force-cancelled: terminating a backup, restore, update or server installation mid-operation can damage files.</p>
 </section>
 
+</details>
+
+<details class="mc-feature-group">
+<summary>Recent jobs and history</summary>
 <section class="panel spaced" data-manager-recent><div class="panel-title"><h2>Recent management jobs (history)</h2><a class="subtle" href="?tab=manager">Refresh</a></div>
   <p class="hint">These are past operations, not current server health. Earlier failures remain in the history after a later successful installation. This list updates automatically every 3 seconds. <span data-manager-sync aria-live="polite">Connecting…</span></p>
   <?php if (!$recent): ?><p class="empty">No completed jobs yet.</p><?php endif; ?>
@@ -326,3 +392,4 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <a href="?tab=manager&amp;job=<?= h($job['id']??'') ?>"><?= h($job['state']??'') ?> · <?= h(isset($job['finished'])?date('H:i:s',(int)$job['finished']):'') ?></a></div>
   <?php endforeach; ?>
 </section>
+</details>
