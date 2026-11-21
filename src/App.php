@@ -73,6 +73,11 @@ function server_from(array $config, string $id): array {
     }
     $s = $servers[$id];
     $s['path'] = valid_root((string)($s['path'] ?? ''));
+    $s['edition'] = server_edition($s);
+    $s['deployment'] = is_container($s) ? 'container' : 'native';
+    if ($s['edition'] === 'bedrock' && !empty($s['worlds_path'])) {
+        $s['worlds_path'] = valid_root((string)$s['worlds_path']);
+    }
     return $s;
 }
 function server_file(array $server, string $name): string {
@@ -217,7 +222,8 @@ function player_update(array $server, string $type, string $action, array $input
     atomic_write($file, $mode === 'txt' ? implode("\n", $entries) . "\n" : json_encode($entries, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR) . "\n");
 }
 function list_worlds(array $server): array {
-    $dir = $server['path'];
+    try { $dir = world_root($server); }
+    catch (InvalidArgumentException $e) { return []; }
     $found = [];
     foreach (scandir($dir) ?: [] as $item) {
         if ($item === '.' || $item === '..' || is_link($dir . DIRECTORY_SEPARATOR . $item)) continue;
@@ -247,9 +253,12 @@ function log_text(array $server): array {
         $lines = preg_split('/\r\n|\n|\r/', $data) ?: [];
         return [$relative, implode("\n", array_slice($lines, -350))];
     }
-    return ['', 'No log found (logs/latest.log or server.log).'];
+    return ['', is_container($server)
+        ? 'No file-based log found. Container output is available under DSM Container Manager > Container > Log. mcconfig does not access Docker control services.'
+        : 'No log found (logs/latest.log or server.log).'];
 }
 function jar_upload(array $server, array $upload, bool $confirmed): void {
+    if (is_bedrock($server)) throw new InvalidArgumentException('Bedrock servers do not use Java JAR files.');
     if (!$confirmed) throw new InvalidArgumentException('Confirm the Minecraft server is stopped first.');
     $name = (string)($server['jar'] ?? '');
     if (!preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $name)) throw new RuntimeException('Configure a JAR filename for this server first.');
@@ -267,17 +276,39 @@ function jar_upload(array $server, array $upload, bool $confirmed): void {
     if (!move_uploaded_file((string)$upload['tmp_name'], $target)) throw new RuntimeException('Could not install JAR; check write permissions.');
 }
 
-function editable_files(): array {
+function editable_files(?array $server = null): array {
+    if ($server && is_bedrock($server)) return [
+        'allowlist.json'=>'Bedrock allowlist (advanced JSON)',
+        'permissions.json'=>'Bedrock permissions (advanced JSON)',
+    ];
     return [
         'bukkit.yml'=>'Bukkit configuration', 'spigot.yml'=>'Spigot configuration',
         'paper.yml'=>'Paper configuration (legacy)', 'permissions.yml'=>'Permissions',
         'commands.yml'=>'Commands', 'help.yml'=>'Help',
+        'config/paper-global.yml'=>'Paper global (modern)',
+        'config/paper-world-defaults.yml'=>'Paper world defaults (modern)',
         'eula.txt'=>'Minecraft EULA',
     ];
 }
+function editable_path(array $server, string $name): string {
+    if (!isset(editable_files($server)[$name])) throw new InvalidArgumentException('Configuration file is not allowed.');
+    $root = valid_root($server['path']);
+    $parts = explode('/', $name);
+    $target = $root;
+    foreach ($parts as $index => $part) {
+        if (!preg_match('/^[A-Za-z0-9._-]+$/D', $part) || $part === '.' || $part === '..') {
+            throw new InvalidArgumentException('Invalid configuration path.');
+        }
+        $target .= DIRECTORY_SEPARATOR . $part;
+        if (is_link($target)) throw new RuntimeException('Symlinked configuration paths are unsupported.');
+        if ($index < count($parts)-1 && !is_dir($target)) {
+            throw new RuntimeException('Required configuration subdirectory not found.');
+        }
+    }
+    return $target;
+}
 function editable_text(array $server, string $name): string {
-    if (!isset(editable_files()[$name])) throw new InvalidArgumentException('Configuration file is not allowed.');
-    $file = server_file($server, $name);
+    $file = editable_path($server, $name);
     if (!is_file($file)) throw new RuntimeException('This configuration file does not exist yet.');
     if (filesize($file) > 1048576) throw new RuntimeException('File exceeds the 1 MiB editor limit.');
     $content = file_get_contents($file);
@@ -290,7 +321,7 @@ function save_editable_text(array $server, string $name, string $content): void 
     }
     $existing = editable_text($server, $name);
     if ($existing === $content) return;
-    $file = server_file($server, $name);
+    $file = editable_path($server, $name);
     backup_file($file);
     atomic_write($file, $content);
 }
@@ -298,7 +329,7 @@ function save_editable_text(array $server, string $name, string $content): void 
 function export_world(array $server, string $name): string {
     if (!class_exists('ZipArchive')) throw new RuntimeException('Enable the PHP zip extension for world downloads.');
     if (!in_array($name, list_worlds($server), true)) throw new InvalidArgumentException('World not found.');
-    $root = $server['path'] . DIRECTORY_SEPARATOR . $name;
+    $root = world_root($server) . DIRECTORY_SEPARATOR . $name;
     $dir = data_dir();
     if (!is_writable($dir)) throw new RuntimeException('Private temporary directory is not writable.');
     $file = tempnam($dir, 'mcconfig-world-');
@@ -343,7 +374,7 @@ function world_archive_name(string $name): string {
 function import_world_archive(array $server, string $name, string $zipPath): void {
     if (!class_exists('ZipArchive')) throw new RuntimeException('Enable the PHP zip extension for world uploads.');
     $name = world_archive_name($name);
-    $target = $server['path'] . DIRECTORY_SEPARATOR . $name;
+    $target = world_root($server) . DIRECTORY_SEPARATOR . $name;
     if (file_exists($target) || is_link($target)) throw new RuntimeException('World already exists; refusing to overwrite.');
     $zip = new ZipArchive();
     if ($zip->open($zipPath, ZipArchive::RDONLY) !== true) throw new RuntimeException('Invalid ZIP archive.');
@@ -426,3 +457,5 @@ function delete_fixture_tree(string $directory): void {
     }
     @rmdir($directory);
 }
+
+require_once __DIR__ . '/ServerTypes.php';

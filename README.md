@@ -1,60 +1,71 @@
 # mcconfig
 
-mcconfig is a lightweight PHP web interface for managing Minecraft Java Edition servers whose files are available on the web host. Originally built for Synology NAS, it now runs as a **generic PHP web application**. An optional **Synology DSM 7.2+ package** is built from the same files.
+mcconfig is a small, self-hosted PHP web interface for managing **Minecraft Java Edition** and **Minecraft Bedrock Dedicated Server** configuration. It works with traditional local installations or containerized servers using **host bind mounts**.
+
+The primary distribution is a generic web application. An optional Synology **DSM 7.2+ SPK** is generated from the exact same application sources. The original mcconfig icon is retained.
 
 ## Features
 
-- Responsive administration interface using the original mcconfig artwork.
-- Password-protected administrator account and CSRF-protected changes.
-- Manage multiple local Minecraft, CraftBukkit, Spigot or Paper server directories.
-- Edit all existing server.properties keys, including newer Minecraft options; add new keys without deleting unrelated settings or comments.
-- Operators, whitelist, banned players and banned IPs. Supports modern JSON formats (Minecraft UUIDs required) and legacy text lists.
-- Edit existing Bukkit/Spigot/Paper YAML configuration and EULA text files with file backups.
-- Detect and select worlds, download a world ZIP and import a new world ZIP.
-- View the recent server log without loading an entire large log file.
-- Upload a replacement server JAR after stopping Minecraft; keep a backup of the prior JAR.
-- No database, Node.js, Composer, Java uploader applet, shell execution or external runtime libraries.
+- Password-protected, responsive web interface with multiple server profiles.
+- Dynamic editor for all properties in server.properties, preserving unknown keys and comments.
+- Java Edition: operators, whitelist, player/IP bans, including modern UUID JSON lists and older text files.
+- Bedrock Edition: allowlist by gamertag and permissions by Xbox XUID (operator/member/visitor).
+- Bukkit, Spigot and Paper: edit supported configuration files, including modern config/paper-global.yml and config/paper-world-defaults.yml.
+- Discover/select, ZIP-export and import worlds (separate Bedrock worlds paths supported).
+- View recent file-based server logs; manually upload a replacement Java server JAR with a backup.
+- Backups before configuration changes, CSRF protection, restricted file operations and checked world ZIP extraction.
+- No database, PHP frameworks, Docker socket, Java upload applet or external program execution.
 
-## Requirements
+## Runtime
 
-- PHP **8.2 or later** with sessions enabled.
-- PHP **zip** extension for world ZIP import/export.
-- Read/write filesystem access for the specific Minecraft server files you want to edit.
-- A private writable storage directory for application configuration.
-- HTTPS and restricted access to the management URL.
+- PHP **8.2+**, sessions, **zip** and **zlib** enabled.
+- A writable private application data directory and filesystem permissions on the Minecraft files.
+- HTTPS and restricted network access are recommended for this administration application.
 
-mcconfig works with **local or mounted** Minecraft files. Ordinary shared hosting cannot manage Minecraft files hosted on another machine unless those files are made accessible to the PHP host. It does not start or stop the Minecraft process.
+Minecraft is **not** included. mcconfig does not launch containers, install Java runtimes, run Minecraft commands or restart server processes. Server operation remains with DSM Container Manager, systemd, Docker Compose or your existing Minecraft package.
 
-## Generic web installation
-
-Run:
+## Generic web install
 
     python packaging/build.py --format web
 
-Extract the generated mcconfig-web ZIP onto your PHP server, and configure the web server document root to its **public/** directory. Keep **src/** and **var/** outside the public document root. Ensure **var/** is writable by the PHP account, or configure an external directory using the MCCONFIG_DATA_DIR environment variable. The web ZIP does not contain any password or private configuration.
+Extract the generated ZIP into the web host. Configure the document root to **public/**; **src/** and **var/** must not be publicly accessible. Allow the PHP account to write to **var/** or set the MCCONFIG_DATA_DIR environment variable to a private path.
 
-Open the website, create an administrator password, then use **Settings → Add a Minecraft server**. Enter the absolute path to the server directory containing server.properties. Set the JAR filename if you want manual JAR replacements.
-
-For Apache, the included .htaccess blocks directory listings and requests for additional PHP files in public/. For nginx, set the document root to public/ and ensure only index.php is executable.
+Open the site, create an administrator password, then **Settings > Add server**. The server path must be the host's absolute directory containing server.properties. For Java installs, a JAR filename is optional. For Bedrock, specify the directory containing server.properties and a separate worlds directory if necessary.
 
 ## Synology DSM 7.2+
 
-Install **Web Station** and **PHP 8.2** (or a compatible newer PHP package). Build the optional SPK with:
+Install Web Station and PHP 8.2 from Package Center, then build:
 
     python packaging/build.py --format spk
 
-Install the generated mcconfig-DSM7 SPK through Package Center → Manual Install. It registers a Web Station **/mcconfig** portal and a PHP profile without using old Init_3rdparty or DSM 5 Apache scripts. The original icon is preserved.
+The resulting SPK is installed using **Package Center > Manual Install**. It registers the /mcconfig Web Station portal and a dedicated PHP 8.2 profile using **backend 11**, with **session, zip and zlib** enabled. The application runs under an unprivileged account.
 
-The DSM package stores configuration in /var/packages/mcconfig/var and serves the application from the web_packages directory. For server files under /volume1, /volume2, and so on, ensure that the **mcconfig** PHP service account has the required access. Review the PHP profile's open_basedir paths in Web Station if you use other volumes.
+The profile's open_basedir permits common /volume1–/volume6 storage, but DSM ACL permissions still apply. Grant the **mcconfig PHP service user** access to only the Minecraft directories it needs. Configuration is kept under /var/packages/mcconfig/var, separately from deployable web files. The package does not need Init_3rdparty or DSM 5 Apache scripts.
 
-## Limits and precautions
+## Container examples
 
-- Configuration and player list changes may require a Minecraft restart or reload.
-- The JAR uploader performs **manual local uploads only**. No downloads from untrusted update URLs.
-- Stop Minecraft before replacing JARs or transferring worlds; world export is not a live consistent snapshot.
-- World ZIP transfers are limited to 512 MiB uploads and 2 GiB uncompressed data. Existing worlds are never overwritten on import.
-- This is a **file manager for supported Minecraft configuration**, not a remote console, service manager or full-featured Minecraft server panel.
-- YAML files are edited as text, not semantically validated.
-- Do not expose the first-run setup page on the public Internet before creating your administrator password.
+**Java / Paper / Spigot / CraftBukkit:** A container such as [itzg/minecraft-server](https://github.com/itzg/docker-minecraft-server) commonly mounts:
 
-The historical 2014 DSM 5-era implementation is preserved in earlier Git history, separate from the deployable application.
+    /volume1/docker/minecraft-java/data:/data
+
+In mcconfig set **Edition: Java**, **Deployment: Container**, **Host path: /volume1/docker/minecraft-java/data**.
+
+**Bedrock:** [itzg/minecraft-bedrock-server](https://github.com/itzg/docker-minecraft-bedrock-server) usually uses a host-mounted /data directory. If a setup uses separate configuration and world volumes, set both host paths, such as:
+
+    /volume1/docker/minecraft-bedrock/config
+    /volume1/docker/minecraft-bedrock/worlds
+
+Set **Edition: Bedrock** and use those as the configuration and worlds paths.
+
+**Important:** Docker variables may regenerate or override server.properties every time the container starts. For the itzg Java image, consider setting **OVERRIDE_SERVER_PROPERTIES=false** when managing that file directly, and avoid conflicting environment variables. Container stdout logs appear in **DSM Container Manager** unless also saved to a file.
+
+## Limitations
+
+- PHP needs host filesystem access; it cannot browse an unmounted container filesystem or another server over the network.
+- All changes to local Minecraft files can be overwritten by server-generated settings or container environment variables; restart Minecraft as needed.
+- Bedrock uses **Xbox XUIDs** and gamertags, not Java UUIDs. Bedrock has no Java JAR uploader. Server process / console control is intentionally outside mcconfig.
+- World imports are non-overwriting and exports are not consistent live snapshots. Stop the server before world import/export and Java JAR replacement.
+- Some Paper/plugin configuration files are version-dependent; the restricted editor supports known filenames, not arbitrary filesystem browsing.
+- A Java server may require a newer Java runtime and substantial RAM/CPU despite minimal container overhead; check hardware and Minecraft version requirements.
+
+Original DSM 5-era mcconfig source is retained in Git history and an offline development archive.
