@@ -87,6 +87,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <p class="muted"><?= h(ucfirst($row['edition']??'java')) ?> · <?= h(ucfirst($software)) ?> · <?= h($row['deployment']??'native') ?> · <?= h($row['version']??'Unknown version') ?></p>
         <code><?= h($row['path']??'') ?></code>
       </div><strong><?= h($status) ?></strong></div>
+      <p><a class="subtle" href="?tab=console&amp;server=<?= h($id) ?>">Open console</a></p>
       <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
         <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>
       <?php endif; ?>

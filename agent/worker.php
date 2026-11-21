@@ -6,6 +6,9 @@ require dirname(__DIR__).'/src/App.php';
 require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
 require __DIR__.'/Status.php';
+require dirname(__DIR__).'/src/Console.php';
+require __DIR__.'/Console.php';
+require __DIR__.'/Rcon.php';
 
 function worker_write(string $file,array $value): void {
     $signed=json_encode(manager_sign($value),JSON_UNESCAPED_SLASHES|JSON_THROW_ON_ERROR);
@@ -578,6 +581,7 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
             'version'=>$meta['version']??'unknown','build'=>$meta['build']??'',
             'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
     }
+    if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
     if ($op==='check_updates') {
         if ($mode==='container') {
             return ['software'=>$meta['software']??'unknown','installed'=>$meta['version']??'unknown',
@@ -756,6 +760,7 @@ function worker_refresh(array &$native): void {
             worker_state((string)$id,['state'=>$state,'software'=>$meta['software']??'unknown',
                 'version'=>$meta['version']??'unknown','build'=>$meta['build']??'',
                 'port'=>$meta['port']??null,'memory'=>$meta['memory']??null]+$live);
+            worker_console_capture((string)$id,$row,$meta,$native);
         } catch (Throwable) {continue;}
     }
 }
