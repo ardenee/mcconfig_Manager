@@ -22,7 +22,7 @@ REQUIRED = {"public/index.php", "public/assets/style.css", "public/assets/app.js
             "public/assets/mcconfig.png", "src/App.php", "src/ServerTypes.php",
             "src/BedrockPlayersView.php", "src/Manager.php", "src/ManagerView.php",
             "src/Console.php", "src/ConsoleView.php", "src/Uploads.php",
-            "src/Plugins.php", "src/PluginPackages.php", "src/DockerAccess.php", "src/DsmOnDemand.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php", "src/Startup.php",
+            "src/Plugins.php", "src/PluginPackages.php", "src/DockerAccess.php", "src/DsmOnDemand.php", "src/DsmBedrock.php", "src/PluginsView.php", "src/ServerJar.php", "src/ServerJarView.php", "src/Startup.php",
             "agent/worker.php", "agent/JavaRuntime.php", "agent/Status.php",
             "agent/Console.php", "agent/Rcon.php", "agent/Plugins.php", "agent/PluginPackages.php", "agent/ServerJar.php", "agent/Startup.php", "agent/PaperMigration.php",
             "agent/BackupRestore.php", "agent/Recovery.php", "agent/Logs.php", "agent/DockerAccess.php",

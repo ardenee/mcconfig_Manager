@@ -134,6 +134,9 @@ function manager_form_job(array $post, array $config): string {
     $allowed = ['status','check_updates','start','stop','restart','backup','verify_backup','restore_backup','update','uninstall','adopt'];
     if (!in_array($op,$allowed,true)) throw new InvalidArgumentException('Unsupported server operation.');
     if (!isset($config['servers'][$id])) throw new InvalidArgumentException('Server no longer registered.');
+    if (($config['servers'][$id]['control_mode']??'')==='dsm-on-demand') {
+        throw new RuntimeException('Use the one-time DSM administrator authorization panel for this container.');
+    }
     $params=[];
     if ($op==='update') $params['version']=request_string($post,'version',48);
     if ($op==='verify_backup' || $op==='restore_backup') {

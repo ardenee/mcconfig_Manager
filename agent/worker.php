@@ -915,7 +915,8 @@ function worker_refresh(array &$native): void {
     if (!is_array($servers)) return;
     foreach($servers as $id=>$row) {
         if (!preg_match('/^[a-f0-9]{12}$/D',(string)$id)||!is_array($row)) continue;
-        if (($row['install_state']??'')==='pending') continue;
+        if (($row['install_state']??'')==='pending' ||
+            ($row['control_mode']??'')==='dsm-on-demand') continue;
         try {
             [$path,$meta]=worker_managed((string)$id,$row);
             $state=($meta['deployment']??'native')==='container'
