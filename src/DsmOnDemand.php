@@ -6,6 +6,40 @@ declare(strict_types=1);
  * sid/CSRF are local variables and are always discarded after logout.
  * No job queue, persistent session, credential files, or Docker socket access.
  */
+/**
+ * Only unsuccessful responses from SYNO.API.Auth count against this limiter.
+ * Wizard operations (image pull, verify, create, start) and validation failures
+ * never consume login attempts. Credentials remain ephemeral.
+ */
+function dsm_login_rate_guard(): void {
+    if (session_status()!==PHP_SESSION_ACTIVE) return;
+    // Drop the legacy counter: it counted successful logins followed by failed
+    // Docker operations, which could lock out an authorized administrator.
+    unset($_SESSION['dsm_approval_tries'],$_SESSION['dsm_approval_since']);
+    $since=(int)($_SESSION['dsm_failed_login_since_v2']??0);
+    if ($since<=0||time()-$since>=900) {
+        unset($_SESSION['dsm_failed_login_count_v2'],$_SESSION['dsm_failed_login_since_v2']);
+        return;
+    }
+    if ((int)($_SESSION['dsm_failed_login_count_v2']??0)>=4) {
+        $remaining=max(1,(int)ceil((900-(time()-$since))/60));
+        throw new RuntimeException('Too many failed DSM login attempts. Try again in '.$remaining.' minute(s).');
+    }
+}
+function dsm_login_rate_failure(): void {
+    if (session_status()!==PHP_SESSION_ACTIVE) return;
+    $since=(int)($_SESSION['dsm_failed_login_since_v2']??0);
+    if ($since<=0||time()-$since>=900) {
+        $_SESSION['dsm_failed_login_since_v2']=time();
+        $_SESSION['dsm_failed_login_count_v2']=0;
+    }
+    $_SESSION['dsm_failed_login_count_v2']=(int)($_SESSION['dsm_failed_login_count_v2']??0)+1;
+}
+function dsm_login_rate_success(): void {
+    if (session_status()!==PHP_SESSION_ACTIVE) return;
+    unset($_SESSION['dsm_failed_login_count_v2'],$_SESSION['dsm_failed_login_since_v2'],
+        $_SESSION['dsm_approval_tries'],$_SESSION['dsm_approval_since']);
+}
 function dsm_approval_post(array $params,array $headers=[]): array {
     if (!extension_loaded('curl')) {
         throw new RuntimeException('Enable the PHP curl extension in the mcconfig Web Station PHP 8.2 profile.');
@@ -173,6 +207,7 @@ function dsm_approval_once(
             $operation==='bedrock-verify'||$operation==='cleanup'?['ready','imported','unverified']:['ready','imported'],true))) {
         throw new RuntimeException('Select a registered Minecraft container; start/stop requires a verified, ready server.');
     }
+    dsm_login_rate_guard();
     $send=$send??'dsm_approval_post';
     $session='';
     $token='';
@@ -184,12 +219,18 @@ function dsm_approval_once(
             'enable_syno_token'=>'yes','enable_device_token'=>'no'
         ];
         if ($otp!=='') $fields['otp_code']=$otp;
-        $login=dsm_approval_checked($send($fields),'DSM login');
+        $loginReply=$send($fields);
+        // Count only an explicit negative response from DSM authentication,
+        // not an API transport error or any later container verification error.
+        if (($loginReply['success']??null)===false) dsm_login_rate_failure();
+        $login=dsm_approval_checked($loginReply,'DSM login');
         $session=(string)($login['sid']??'');
         $token=(string)($login['synotoken']??'');
         if ($session==='' || strlen($session)>512) {
             throw new RuntimeException('DSM login succeeded but no session ID was returned.');
         }
+        // Login was valid even if a subsequent Docker API operation fails.
+        dsm_login_rate_success();
         $api=function(array $params)use($send,&$session,&$token):array {
             $params['_sid']=$session;
             if ($token!=='') $params['SynoToken']=$token;

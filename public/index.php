@@ -91,15 +91,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))!=='xmlhttprequest') {
                 throw new RuntimeException('This installer requires JavaScript. Enable it in your browser.');
             }
-            $tries=(int)($_SESSION['dsm_approval_tries']??0);
-            $since=(int)($_SESSION['dsm_approval_since']??0);
-            if ($since===0||time()-$since>900) {$tries=0;$since=time();}
-            if ($tries>=4) throw new RuntimeException('Too many failed DSM authorization attempts. Try again in 15 minutes.');
-            $_SESSION['dsm_approval_since']=$since;
-            $_SESSION['dsm_approval_tries']=$tries+1;
             try {
                 $dsmReport=dsm_wizard_step($_POST,$config);
-                $_SESSION['dsm_approval_tries']=0;
                 if (!empty($dsmReport['server_id'])) $_SESSION['server_id']=$dsmReport['server_id'];
                 header('Content-Type: application/json; charset=utf-8');
                 echo json_encode(['ok'=>true,'result'=>$dsmReport],JSON_THROW_ON_ERROR|JSON_INVALID_UTF8_SUBSTITUTE);
@@ -127,12 +120,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off') {
                 throw new RuntimeException('Open mcmanager over HTTPS before entering DSM administrator credentials.');
             }
-            $tries=(int)($_SESSION['dsm_approval_tries']??0);
-            $since=(int)($_SESSION['dsm_approval_since']??0);
-            if ($since===0||time()-$since>900) {$tries=0;$since=time();}
-            if ($tries>=4) throw new RuntimeException('Too many DSM login attempts. Try again in 15 minutes.');
-            $_SESSION['dsm_approval_since']=$since;
-            $_SESSION['dsm_approval_tries']=$tries+1;
             $operation=request_string($_POST,'dsm_operation',18);
             $row=null;
             $serverId='';
@@ -200,7 +187,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $dsmReport['message'].=' '.$cleaned['message'];
                     if (($_SESSION['server_id']??'')===$serverId)unset($_SESSION['server_id']);
                 }
-                $_SESSION['dsm_approval_tries']=0;
                 $message=$dsmReport['message'];
                 $tab='manager';
             } finally {
@@ -736,9 +722,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.12">
-<script src="assets/app.js?v=0.5.12" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.12" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.13">
+<script src="assets/app.js?v=0.5.13" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.13" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
