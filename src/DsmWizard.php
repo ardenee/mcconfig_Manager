@@ -137,7 +137,7 @@ function dsm_wizard_error_help(string $message,string $step): array {
             'help'=>'The installed container was created without the required host folder mapping. Use Repair incorrect /data mount below to replace it only if DSM proves it was never started. The action requires separate confirmation and preserves the mcmanager world directory.'];
     }    if (str_contains($s,'mount')||str_contains($s,'verif')) {
         return ['title'=>'Container needs verification',
-            'help'=>'Compare the Expected host path with the DSM /data source shown above. If the paths differ, correct the container volume binding in DSM Container Manager before retrying. If they refer to the same folder but PHP cannot resolve the DSM path, check package filesystem permissions, symlink aliases and Web Station open_basedir. Do not remove or recreate the server to troubleshoot this. The wizard will not start an unverified container.'];
+            'help'=>'Verification checks the actual Docker /data mount first. If the error lists an anonymous @docker volume, a separate guarded repair may be offered. If it lists conflicting real Docker bind paths, inspect the container volume mapping in DSM. Choose Verify container again after correcting it. Do not delete or recreate the server merely because Synology presents a second /@appdata alias.'];
     }
     if (str_contains($s,'http')||str_contains($s,'api')||str_contains($s,'connect')) {
         return ['title'=>'Container Manager communication failed',

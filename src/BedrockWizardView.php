@@ -72,7 +72,7 @@ $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
         Start the server automatically after installation
       </label>
       <div class="mc-wizard-buttons">
-        <button type="submit" class="primary" data-wizard-install><?= $resumeServer?'Resume Bedrock setup':'Install Bedrock server' ?></button>
+        <button type="submit" class="primary" data-wizard-install><?= $resumeServer?'Verify existing Bedrock container':'Install Bedrock server' ?></button>
         <button type="button" class="subtle" data-wizard-stop hidden>Stop monitoring</button>
       </div>
       <div class="mc-wizard-progress" data-wizard-progress hidden aria-live="polite">

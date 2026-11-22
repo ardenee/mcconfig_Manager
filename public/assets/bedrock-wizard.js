@@ -58,7 +58,8 @@ document.addEventListener('DOMContentLoaded', () => {
     busy = locked;
     install.disabled = locked;
     retry.disabled = locked;
-    retry.textContent = locked ? 'Retrying…' : 'Retry this step';
+    retry.textContent = locked ? 'Verifying...' :
+      (phase === 'verify' ? 'Verify container again' : 'Retry this step');
     stopButton.hidden = !locked;
     form.classList.toggle('mc-wizard-busy', locked);
     // readOnly keeps fields in FormData for all successive authenticated calls.
@@ -228,7 +229,8 @@ document.addEventListener('DOMContentLoaded', () => {
       recheck.hidden = !['pull','poll','confirm-image'].includes(phase);
       if (repair) {
         repair.hidden = !(serverId && phase === 'verify' &&
-          /\/data bind mount mismatch/.test(error.message || ''));
+          /\/data bind mount mismatch/.test(error.message || '') &&
+          /\/@docker\/volumes\//.test(error.message || ''));
       }
       status.textContent = 'Action required: ' + (error.message || 'See the error below.');
       if (phase === 'poll' || phase === 'confirm-image') {

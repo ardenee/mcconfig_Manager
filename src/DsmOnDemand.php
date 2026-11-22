@@ -102,16 +102,23 @@ function dsm_approval_container_name(string $name): string {
 /**
  * Verify the identity and actual /data bind mount without returning inspect data.
  * Synology may return Docker inspect details, a DSM profile or both.
- * Treat conflicting evidence as a failure, even if one section matches.
+ * Docker runtime mounts are authoritative over DSM's saved profile aliases.
+ * Conflicting runtime /data sources always fail; unreadable profile-only aliases
+ * cannot override a verified actual Docker bind mount.
  */
 function dsm_approval_container_assessment(array $details,array $server,string $name): array {
     $expected=realpath((string)($server['path']??''));
     if ($expected===false) {
         return ['verified'=>false,'name'=>'missing','image'=>'missing','mount'=>'storage unavailable'];
     }
-    $sections=[[$details,0]];
-    $nameFound=false;$imageFound=false;$mountFound=false;
-    $wrongName=false;$wrongImage=false;$wrongMount=false;
+    $sections=[[$details,0,false]];
+    $nameFound=false;$imageFound=false;
+    $wrongName=false;$wrongImage=false;
+    $mountTiers=[
+        'runtime'=>['seen'=>false,'matched'=>false,'wrong'=>false],
+        'hostconfig'=>['seen'=>false,'matched'=>false,'wrong'=>false],
+        'profile'=>['seen'=>false,'matched'=>false,'wrong'=>false]
+    ];
     $mountDiagnostics=[];
     $imagePattern=(($server['edition']??'java')==='bedrock')
         ? '~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD'
@@ -131,10 +138,11 @@ function dsm_approval_container_assessment(array $details,array $server,string $
     };
     // Only follow identity/profile wrapper keys. Never traverse environment fields.
     for ($i=0;$i<count($sections) && $i<32;$i++) {
-        [$info,$depth]=$sections[$i];
+        [$info,$depth,$inProfile]=$sections[$i];
         if ($depth<4) {
             foreach(['data','details','profile','container','info'] as $key) {
-                if (is_array($info[$key]??null))$sections[]=[$info[$key],$depth+1];
+                if (is_array($info[$key]??null))
+                    $sections[]=[$info[$key],$depth+1,$inProfile||$key==='profile'];
             }
         }
         foreach(['Name','name'] as $key) {
@@ -151,45 +159,71 @@ function dsm_approval_container_assessment(array $details,array $server,string $
             if (preg_match($imagePattern,$image))$imageFound=true;
             elseif (!preg_match('/^(?:sha256:)?[0-9a-f]{64}$/iD',$image))$wrongImage=true;
         }
+        // Docker's actual Mounts describe what is attached to /data.
+        // HostConfig is the requested bind configuration; Synology's profile
+        // may expose a volume-relative alias such as /@appdata/... that is not
+        // a separate runtime mount and is unreadable to Web Station PHP.
         $groups=[];
         foreach(['Mounts','mounts','volume_bindings','volumes'] as $key) {
-            if (is_array($info[$key]??null))$groups[]=$info[$key];
+            if (!is_array($info[$key]??null))continue;
+            $tier=$inProfile||in_array($key,['volume_bindings','volumes'],true)
+                ?'profile':'runtime';
+            $groups[]=[$info[$key],$tier];
         }
-        if (is_array($info['HostConfig']['Mounts']??null))$groups[]=$info['HostConfig']['Mounts'];
-        if (is_array($info['HostConfig']['Binds']??null))$groups[]=$info['HostConfig']['Binds'];
-        foreach($groups as $mounts) {
+        if (is_array($info['HostConfig']['Mounts']??null))
+            $groups[]=[$info['HostConfig']['Mounts'],$inProfile?'profile':'hostconfig'];
+        if (is_array($info['HostConfig']['Binds']??null))
+            $groups[]=[$info['HostConfig']['Binds'],$inProfile?'profile':'hostconfig'];
+        foreach($groups as [$mounts,$tier]) {
             foreach($mounts as $mount) {
-                $source='';$destination='';
-                if (is_string($mount) && preg_match('~^(.+):(/[^:]+)(?::[^:]*)?$~D',$mount,$parts)) {
+                $source='';$destination='';$type='';
+                if (is_string($mount) &&
+                    preg_match('~^(.+):(/[^:]+)(?::[^:]*)?$~D',$mount,$parts)) {
                     $source=$parts[1];$destination=$parts[2];
                 } elseif(is_array($mount)) {
                     $destination=(string)($mount['Destination']??$mount['destination']??
                         $mount['Target']??$mount['target']??$mount['mount_point']??
                         $mount['container_path']??'');
                     $source=(string)($mount['Source']??$mount['source']??
-                        $mount['host_volume_file']??$mount['host_absolute_path']??$mount['host_path']??'');
+                        $mount['host_volume_file']??$mount['host_absolute_path']??
+                        $mount['host_path']??'');
+                    $type=strtolower((string)($mount['Type']??''));
                 }
                 if (rtrim($destination,'/')!=='/data')continue;
-                $matched=$isMatch($source);
-                if ($matched)$mountFound=true;else $wrongMount=true;
+                // "volume" is not a bind mount even if a path happens to match.
+                $matched=$isMatch($source)&&($tier==='profile'||
+                    $type===''||$type==='bind');
+                $mountTiers[$tier]['seen']=true;
+                if ($matched)$mountTiers[$tier]['matched']=true;
+                else $mountTiers[$tier]['wrong']=true;
                 if (count($mountDiagnostics)<6) {
                     $resolved=$source!==''?@realpath($source):false;
                     $mountDiagnostics[]=[
                         'reported'=>$source,
                         'resolved'=>$resolved!==false?$resolved:null,
-                        'matched'=>$matched
+                        'matched'=>$matched,'origin'=>$tier
                     ];
                 }
             }
         }
     }
+    // Prefer authoritative live Docker mount data over a DSM display alias.
+    // If runtime evidence exists, never fall back to a matching saved profile.
+    $bestTier='profile';
+    foreach(['runtime','hostconfig','profile'] as $tier) {
+        if ($mountTiers[$tier]['seen']) {$bestTier=$tier;break;}
+    }
+    $mountFound=$mountTiers[$bestTier]['matched'];
+    $wrongMount=$mountTiers[$bestTier]['wrong'];
+
     $nameStatus=$wrongName?'mismatch':($nameFound?'confirmed':'not reported');
     $imageStatus=$wrongImage?'mismatch':($imageFound?'confirmed':'not reported');
     $mountStatus=$wrongMount?'mismatch':($mountFound?'confirmed':'not reported');
     return [
         'verified'=>$nameFound&&$imageFound&&$mountFound&&!$wrongName&&!$wrongImage&&!$wrongMount,
         'name'=>$nameStatus,'image'=>$imageStatus,'mount'=>$mountStatus,
-        'expected_path'=>$expected,'mount_details'=>$mountDiagnostics
+        'expected_path'=>$expected,'mount_details'=>$mountDiagnostics,
+        'mount_authority'=>$bestTier
     ];
 }
 function dsm_approval_container_matches(array $details,array $server,string $name): bool {
@@ -217,7 +251,9 @@ function dsm_approval_container_failure(array $details,array $server,string $nam
         } else {
             $paths=[];
             foreach ($check['mount_details'] as $item) {
-                $entry=$show($item['reported']??null);
+                $kind=($item['origin']??'')==='runtime'?'Docker runtime':
+                    (($item['origin']??'')==='hostconfig'?'Docker configuration':'DSM profile');
+                $entry='['.$kind.'] '.$show($item['reported']??null);
                 $actual=$item['resolved']??null;
                 if ($actual===null)$entry.=' (PHP cannot resolve this host path)';
                 elseif ($actual!==($item['reported']??null))
