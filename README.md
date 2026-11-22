@@ -48,7 +48,7 @@ The website can be used for some file-management functions without a worker, but
 ### Windows and Linux
 
 1. Build the generic web package with `python packaging/build.py --format web`, or obtain an existing package.
-2. Extract `mcmanager-web-<version>.zip` and configure the web server document root as `public/`. Never expose `src/`, `agent/` or private data through the web server.
+2. Extract `mcconfig_Manager-web-<version>.zip` and configure the web server document root as `public/`. Never expose `src/`, `agent/` or private data through the web server.
 3. Set up private application storage. The web process and worker must share the same `MCCONFIG_DATA_DIR` and `MCMANAGER_INSTANCES_DIR` values, with appropriate permissions.
 4. Open the web interface and create the administrator password.
 5. Run the worker under a service manager: `php agent/worker.php serve` on Linux, or use `packaging/windows/install-service.ps1` for the Windows Service.
@@ -60,7 +60,7 @@ On Windows, the service installer manages the worker, not Apache/IIS. For a cust
 
 1. Install **Web Station** and **PHP 8.2+** in Package Center; install **Container Manager** for Bedrock.
 2. Build the DSM package with `python packaging/build.py --format all`, or obtain a packaged SPK.
-3. Install `mcmanager-DSM7-<version>.spk` using **Package Center → Manual Install**.
+3. Install `mcconfig_Manager-DSM7-<version>.spk` using **Package Center → Manual Install**.
 4. Open the app over HTTPS, set its administrator password and use Server Manager.
 
 The package retains the internal name `mcconfig` and application address `/mcconfig/` for existing DSM installations.
