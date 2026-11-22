@@ -441,6 +441,12 @@ document.addEventListener('DOMContentLoaded', () => {
           badge.className = 'mc-status mc-status--' + health.tone;
           badge.title = health.hint || '';
         }
+        // Keep lifecycle controls consistent with the new observation
+        // immediately; the 3-second page refresh uses the same PHP rules.
+        const start = card.querySelector('[data-dsm-quick-action="start"]');
+        const stop = card.querySelector('[data-dsm-quick-action="stop"]');
+        if (start) start.hidden = health.stopped !== true;
+        if (stop) stop.hidden = health.running !== true;
       }
       const current = observed.state === 'running' ? 'Running' :
         observed.state === 'stopped' ? 'Stopped' : 'not yet confirmed';

@@ -196,3 +196,6 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-dsm-quick-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px}
 .mc-dsm-quick-feedback{margin:8px 0;padding:7px 10px;border-left:3px solid #637e9d;background:#f0f4f8}
 .mc-dsm-quick-feedback[data-result=error]{border-color:#b1282b;background:#fff0f0}
+
+/* The primary lifecycle action only appears for a DSM-confirmed state. */
+.mc-primary-actions [data-dsm-quick-action][hidden]{display:none!important}

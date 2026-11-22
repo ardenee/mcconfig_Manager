@@ -130,8 +130,8 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <div class="mc-primary-actions" data-server-actions>
         <?php if ($dsmOnly): ?>
           <?php if (($row['install_state']??'ready')==='ready'): ?>
-            <button type="button" class="mc-action-start" data-dsm-quick-action="start">Start</button>
-            <button type="button" class="subtle" data-dsm-quick-action="stop">Stop</button>
+            <button type="button" class="mc-action-start" data-dsm-quick-action="start" <?= $health['stopped']?'':'hidden' ?>>Start</button>
+            <button type="button" class="subtle" data-dsm-quick-action="stop" <?= $health['running']?'':'hidden' ?>>Stop</button>
             <button type="button" class="subtle" data-dsm-quick-action="status">Check status</button>
           <?php endif; ?>
           <?php if (dsm_cleanup_eligible($row,(string)$id)): ?>
