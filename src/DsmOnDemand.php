@@ -66,27 +66,52 @@ function dsm_approval_container_name(string $name): string {
     return $name;
 }
 function dsm_approval_container_matches(array $details,array $server,string $name): bool {
-    // Some DSM versions put the Docker inspect result directly in data, others
-    // return it under a "container" key. Fail closed on any unknown shape.
-    $info=is_array($details['container']??null)?$details['container']:$details;
-    if (is_array($info['info']??null)) $info=$info['info'];
-    $actual=(string)($info['Name']??$info['name']??'');
-    if ($actual!=='' && ltrim($actual,'/')!==$name) return false;
-    $image=(string)($info['Config']['Image']??$info['image']??$info['ImageName']??'');
-    $imageOk=(($server['edition']??'java')==='bedrock')
-        ?preg_match('~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD',$image)
-        :preg_match('~^(?:docker\.io/)?itzg/minecraft-server(?::|@|$)~iD',$image);
-    if (!$imageOk) return false;
-    $registered=realpath((string)($server['path']??''));
-    if ($registered===false) return false;
-    $mounts=$info['Mounts']??$info['mounts']??$info['volumes']??$info['volume_bindings']??[];
-    if (!is_array($mounts)) return false;
-    foreach($mounts as $mount) {
-        if (!is_array($mount))continue;
-        if (($mount['Destination']??$mount['destination']??$mount['mount_point']??$mount['container_path']??'')!=='/data')continue;
-        if (realpath((string)($mount['Source']??$mount['source']??$mount['host_volume_file']??$mount['host_path']??''))===$registered)return true;
+    // DSM versions split Docker inspect details and Synology configuration profile.
+    // Never expose raw inspect: container environment can contain passwords.
+    $sections=[$details];
+    foreach(['details','profile','container','info'] as $key) {
+        if (!is_array($details[$key]??null)) continue;
+        $section=$details[$key];
+        $sections[]=$section;
+        foreach(['info','details'] as $nested) {
+            if (is_array($section[$nested]??null)) $sections[]=$section[$nested];
+        }
     }
-    return false;
+    $expected=realpath((string)($server['path']??''));
+    if ($expected===false) return false;
+    $nameOk=false;$imageOk=false;$mountOk=false;
+    foreach($sections as $info) {
+        $actual=$info['Name']??$info['name']??'';
+        if (is_string($actual)&&$actual!=='') {
+            if (ltrim($actual,'/')!==$name) return false;
+            $nameOk=true;
+        }
+        $image=(string)($info['Config']['Image']??$info['image']??
+            $info['ImageName']??$info['image_name']??'');
+        $pattern=(($server['edition']??'java')==='bedrock')
+            ?'~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD'
+            :'~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-server(?::|@|$)~iD';
+        if ($image!=='') {
+            if (preg_match($pattern,$image)) $imageOk=true;
+            elseif (!preg_match('/^(?:sha256:)?[0-9a-f]{64}$/iD',$image)) {
+                // Profile metadata must not override a different actual image.
+                return false;
+            }
+        }
+        $mounts=$info['Mounts']??$info['mounts']??
+            $info['volumes']??$info['volume_bindings']??[];
+        if (!is_array($mounts))continue;
+        foreach($mounts as $mount) {
+            if (!is_array($mount))continue;
+            $destination=$mount['Destination']??$mount['destination']??
+                $mount['mount_point']??$mount['container_path']??'';
+            $source=$mount['Source']??$mount['source']??
+                $mount['host_volume_file']??$mount['host_path']??'';
+            if ($destination==='/data'&&is_string($source)&&$source!==''&&
+                realpath($source)===$expected) $mountOk=true;
+        }
+    }
+    return $nameOk&&$imageOk&&$mountOk;
 }
 /**
  * $send callback allows offline simulation. Do not persist or log $password or
@@ -97,7 +122,7 @@ function dsm_approval_once(
     string $account,string $password,string $operation,
     ?array $server=null,string $otp='',?callable $send=null
 ): array {
-    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify'],true)) {
+    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify','cleanup'],true)) {
         throw new InvalidArgumentException('Unsupported DSM one-time operation.');
     }
     if (!preg_match('/^[\w.@-]{1,64}$/D',$account) ||
@@ -107,10 +132,10 @@ function dsm_approval_once(
     if ($otp!=='' && !preg_match('/^[0-9]{6,8}$/D',$otp)) {
         throw new InvalidArgumentException('Enter a valid DSM one-time verification code.');
     }
-    if (in_array($operation,['start','stop','bedrock-verify'],true) && (!$server ||
+    if (in_array($operation,['start','stop','bedrock-verify','cleanup'],true) && (!$server ||
         ($server['deployment']??'native')!=='container' ||
         !in_array(($server['install_state']??'ready'),
-            $operation==='bedrock-verify'?['ready','imported','unverified']:['ready','imported'],true))) {
+            $operation==='bedrock-verify'||$operation==='cleanup'?['ready','imported','unverified']:['ready','imported'],true))) {
         throw new RuntimeException('Select a registered Minecraft container; start/stop requires a verified, ready server.');
     }
     $send=$send??'dsm_approval_post';
@@ -150,6 +175,58 @@ function dsm_approval_once(
             }
             return ['operation'=>'bedrock-verify','verified'=>true,'container'=>$name,
                 'message'=>'DSM verified the registered Bedrock container. Approve Start separately when ready.'];
+        }
+        if ($operation==='cleanup') {
+            // Only manager-created Bedrock containers can be removed.
+            $name=dsm_approval_container_name((string)($server['container_name']??''));
+            if (($server['control_mode']??'')!=='dsm-on-demand' ||
+                ($server['edition']??'')!=='bedrock' ||
+                !preg_match('/^mcmanager-bedrock-[a-f0-9]{12}$/D',$name)) {
+                throw new RuntimeException('Only mcmanager-created Bedrock containers can be cleaned up.');
+            }
+            $list=function()use($api):array {
+                $result=dsm_approval_checked($api([
+                    'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'list',
+                    'limit'=>'-1','offset'=>'0','type'=>'all'
+                ]),'Container Manager list');
+                $items=$result['containers']??null;
+                if (!is_array($items)) throw new RuntimeException('Cannot verify DSM containers; nothing was deleted.');
+                return $items;
+            };
+            $match=null;
+            foreach($list() as $item) {
+                if (is_array($item)&&ltrim((string)($item['name']??''),'/')===$name) {
+                    $match=$item;break;
+                }
+            }
+            if ($match===null) return ['operation'=>'cleanup','container_missing'=>true,
+                'message'=>'The container is already absent in DSM. Its stale mcmanager entry can be removed.'];
+            $details=dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'get',
+                'name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
+            ]),'Container identity verification');
+            if (!dsm_approval_container_matches($details,$server,$name)) {
+                throw new RuntimeException('Container image, name or persistent /data mount does not match. Cleanup was refused.');
+            }
+            $state=strtolower((string)($match['status']??$match['state']??''));
+            if (str_contains($state,'running')||str_starts_with($state,'up')) {
+                dsm_approval_checked($api([
+                    'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'stop',
+                    'name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
+                ]),'Stop Minecraft container');
+            }
+            dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'delete',
+                'name'=>json_encode($name,JSON_UNESCAPED_SLASHES),
+                'force'=>'false','preserve_profile'=>'false'
+            ]),'Remove Minecraft container');
+            foreach($list() as $item) {
+                if (is_array($item)&&ltrim((string)($item['name']??''),'/')===$name) {
+                    throw new RuntimeException('DSM still lists the container after deletion. Registration was preserved for review.');
+                }
+            }
+            return ['operation'=>'cleanup','container_missing'=>false,
+                'message'=>'Bedrock container removed. World files and image are separate.'];
         }
         if ($operation==='test') {
             $found=dsm_approval_checked($api([

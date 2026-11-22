@@ -34,7 +34,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 <?php require __DIR__.'/BedrockWizardView.php'; ?>
 
-<details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)?'open':'' ?>>
+<details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)||!empty($_GET['dsm_server'])?'open':'' ?>>
   <summary>Advanced: manual Container Manager actions</summary>
   <p class="hint">Use a DSM administrator account for <strong>one operation only</strong>. Credentials and the temporary DSM session are used in this HTTPS request, then discarded; the adapter attempts DSM logout even when an operation fails. The mcconfig service account keeps its normal restricted permissions.</p>
   <p class="hint">Check Container Manager visibility, verify a registered container, or authorize Start/Stop. For new Bedrock servers, use the automatic installation wizard above. Each operation requires a fresh approval; no Docker socket permissions are changed.</p>
@@ -45,7 +45,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <?php elseif (!extension_loaded('curl')): ?>
     <div class="alert warning">Enable the PHP <code>curl</code> extension in the mcconfig Web Station profile. The SPK requests it from version 0.5.8 onward.</div>
   <?php else: ?>
-    <form action="?tab=manager#mc-dsm-on-demand" method="post" autocomplete="off" class="mc-dsm-approval-form">
+    <form action="?tab=manager#mc-dsm-on-demand" method="post" autocomplete="off" class="mc-dsm-approval-form" data-dsm-approval>
       <?php hidden_csrf(); ?>
       <input type="hidden" name="action" value="dsm_approve_once">
       <div class="form-row">
@@ -56,6 +56,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
               <option value="start">Start one registered Minecraft container</option>
               <option value="stop">Stop one registered Minecraft container</option>
               <option value="bedrock-verify">Verify an installed Bedrock container</option>
+              <option value="cleanup">Remove managed Bedrock container and registration</option>
             <?php endif; ?>
           </select>
         </label>
@@ -64,7 +65,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
             <option value="">No target — authorization test</option>
             <?php foreach($all as $targetId=>$targetRow): ?>
               <?php if (is_array($targetRow)&&($targetRow['deployment']??'native')==='container'&&!empty($targetRow['container_name'])): ?>
-                <option value="<?= h($targetId) ?>"><?= h($targetRow['name']??$targetId) ?> — <?= h($targetRow['container_name']) ?></option>
+                <option value="<?= h($targetId) ?>" data-server-name="<?= h($targetRow['name']??$targetId) ?>"><?= h($targetRow['name']??$targetId) ?> — <?= h($targetRow['container_name']) ?></option>
               <?php endif; ?>
             <?php endforeach; ?>
           </select>
@@ -74,6 +75,19 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <label>DSM administrator username <input name="dsm_account" autocomplete="off" maxlength="64" required></label>
         <label>DSM administrator password <input type="password" name="dsm_password" autocomplete="new-password" maxlength="1024" required></label>
         <label>DSM one-time code (if enabled) <input name="dsm_otp" autocomplete="off" inputmode="numeric" maxlength="8" placeholder="Optional"></label>
+      </div>
+      <div class="mc-dsm-cleanup-options" data-dsm-cleanup hidden>
+        <p><strong>Remove Minecraft container</strong>: stops it if running, removes only this mcmanager-created Bedrock container and its registration. The Docker image stays available for other servers.</p>
+        <label>Type the server name to confirm
+          <input name="confirm_name" maxlength="64" placeholder="Exact server name" disabled>
+        </label>
+        <label class="check"><input name="delete_world_files" type="checkbox" value="1" disabled>
+          Also permanently delete this server's managed world and configuration files (optional)
+        </label>
+        <label data-dsm-world-confirm hidden>To delete world files, type DELETE FILES:
+          <input name="confirm_world_delete" maxlength="12" placeholder="DELETE FILES" disabled>
+        </label>
+        <p class="hint">Only the selected Bedrock container can be deleted. Unrelated containers and Docker images are never removed.</p>
       </div>
       <button class="primary" type="submit">Authorize selected DSM action</button>
       <p class="hint">Use <strong>HTTPS</strong> to access mcmanager before entering DSM credentials. The server contacts DSM at <code>127.0.0.1:5000</code> locally, without redirects, proxies, or externally supplied destinations. Authentication is limited to four attempts per 15 minutes. No background or unattended Docker access is granted.</p>
@@ -114,7 +128,11 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       </div><span data-server-status class="mc-status mc-status--<?= h($health['tone']) ?>" role="status" title="<?= h($health['hint']) ?>"><?= h($status) ?></span></div>
       <div class="mc-primary-actions" data-server-actions>
         <?php if ($dsmOnly): ?>
-          <a class="subtle" href="#mc-dsm-on-demand">Authorize DSM action</a>
+          <a class="subtle" href="?tab=manager&amp;dsm_server=<?= h($id) ?>#mc-dsm-on-demand" data-dsm-open="<?= h($id) ?>" data-dsm-operation="bedrock-verify">Verify / manage container</a>
+          <?php if (dsm_cleanup_eligible($row,(string)$id)): ?>
+            <a class="subtle danger-text" href="?tab=manager&amp;dsm_server=<?= h($id) ?>#mc-dsm-on-demand" data-dsm-open="<?= h($id) ?>" data-dsm-operation="cleanup">Remove container</a>
+            <a class="subtle" href="#mc-forget-<?= h($id) ?>" data-dsm-forget="<?= h($id) ?>">Forget entry</a>
+          <?php endif; ?>
         <?php elseif ($workerOnline && !$pending && ($row['install_state']??'ready')!=='failed'): ?>
           <?php if ($health['stopped']): ?>
             <form method="post" class="inline-form">
@@ -144,6 +162,19 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <a class="subtle" href="?tab=properties&amp;server=<?= h($id) ?>">Properties</a>
         <?php if (($row['edition']??'java')==='java'): ?><a class="subtle" href="?tab=plugins&amp;server=<?= h($id) ?>">Plugins</a><?php endif; ?>
       </div>
+      <?php if ($dsmOnly && dsm_cleanup_eligible($row,(string)$id)): ?>
+        <details id="mc-forget-<?= h($id) ?>" class="mc-stale-server">
+          <summary>Remove obsolete mcmanager entry (keep container and files)</summary>
+          <p class="hint">Use this if the container or image was already removed in Container Manager. This removes only the mcmanager listing; it does not touch any Docker containers, images or world files.</p>
+          <form method="post" data-confirm="Forget this Bedrock server entry? The container, Docker image and world files will NOT be deleted.">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="dsm_forget_server">
+            <input type="hidden" name="server_id" value="<?= h($id) ?>">
+            <label>Confirm exact server name <input name="confirm_name" required maxlength="64" placeholder="<?= h($row['name']??$id) ?>"></label>
+            <button type="submit" class="subtle danger-text">Forget server entry only</button>
+          </form>
+        </details>
+      <?php endif; ?>
       <details class="mc-server-detail">
         <summary>Details, updates and maintenance</summary>
         <p class="hint">Server storage: <code><?= h($row['path']??'') ?></code></p>
