@@ -176,6 +176,49 @@ function manager_backup_files(string $id): array {
     usort($files,fn($a,$b)=>strcmp($b['name'],$a['name']));
     return array_slice($files,0,40);
 }
+/** A folder typed in a browser always means a folder on this host, never on
+ * the user's browser/computer. Validate path syntax without needing web PHP
+ * to have the worker's filesystem privileges.
+ */
+function manager_local_folder_input(string $folder,string $purpose='location'): string {
+    $folder=trim($folder);
+    if ($folder==='' || strlen($folder)>1024 ||
+        preg_match('/[\x00-\x1f\x7f]/',$folder))
+        throw new InvalidArgumentException('Enter a valid local '.$purpose.' folder.');
+    $platform=mc_platform();
+    if (!in_array($platform,['windows','linux'],true))
+        throw new InvalidArgumentException('Custom local paths are supported only on Windows and standard Linux.');
+    $folder=str_replace('\\','/',$folder);
+    if ($platform==='windows') {
+        if (!preg_match('~^[A-Za-z]:/[^/:*?"<>|]+(?:/[^/:*?"<>|]+)*/*$~D',$folder) ||
+            str_contains($folder,'//'))
+            throw new InvalidArgumentException('Enter an absolute local Windows directory, e.g. D:/Minecraft. UNC and network paths are not supported.');
+        $parts=explode('/',substr($folder,3));
+    } else {
+        if ($folder[0]!=='/' || str_starts_with($folder,'//') ||
+            str_contains($folder,'//'))
+            throw new InvalidArgumentException('Enter an absolute local Linux directory, e.g. /srv/minecraft.');
+        $parts=explode('/',substr($folder,1));
+    }
+    foreach($parts as $part) {
+        if ($part==='.' || $part==='..' ||
+            ($platform==='windows' && (str_ends_with($part,' ')||str_ends_with($part,'.'))))
+            throw new InvalidArgumentException('Relative paths, dot components and Windows trailing dots/spaces are not allowed.');
+    }
+    $folder=rtrim($folder,'/');
+    if ($platform==='windows' && strlen($folder)<=2 ||
+        $platform==='linux' && $folder==='') {
+        throw new InvalidArgumentException('Choose a dedicated Minecraft folder, not the filesystem or drive root.');
+    }
+    return $folder;
+}
+function manager_install_folder(array $options,string $id): string {
+    if (!preg_match('/^[a-f0-9]{12}$/D',$id))
+        throw new InvalidArgumentException('Invalid managed server identifier.');
+    $parent=(string)($options['install_parent']??'');
+    if ($parent==='')$parent=manager_instances_root();
+    return rtrim($parent,'/\\').DIRECTORY_SEPARATOR.$id;
+}
 function manager_install_input(array $post): array {
     $edition = request_string($post,'edition',12);
     $software = request_string($post,'software',20);
@@ -202,7 +245,14 @@ function manager_install_input(array $post): array {
           ($edition==='bedrock' && $software==='bedrock' && $platform==='windows'))) {
         throw new InvalidArgumentException('Native installation supports Java Vanilla/Paper and Windows Bedrock. Other native installers are not yet implemented.');
     }
+    $installParent=request_string($post,'install_parent',1024);
+    if ($installParent!=='') {
+        if ($platform==='dsm' || $deployment!=='native')
+            throw new InvalidArgumentException('Custom managed installation locations are Windows/Linux native only.');
+        $installParent=manager_local_folder_input($installParent,'installation');
+    }
     $options=compact('name','edition','software','deployment','version','port','memory');
+    $options['install_parent']=$installParent;
     if ($deployment==='native' && $edition==='java') {
         $options=array_merge($options,startup_settings([
             'memory'=>$memory,'xms'=>$post['xms']??256,

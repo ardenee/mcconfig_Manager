@@ -34,9 +34,14 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     </form>
     <details class="mc-feature-group">
       <summary>Third-party local server discovery (optional)</summary>
-      <p class="hint">Search only known local Minecraft storage directories. Imported servers remain owned by their original installers; this is separate from creating a managed server.</p>
+      <p class="hint">Find Minecraft installations on this computer only. Leave the path blank to scan default managed storage, or specify an existing local folder to scan (including its immediate subfolders). This does not modify the files. Imported servers remain owned by their original installers.</p>
       <form method="post" class="inline-form"><?php hidden_csrf(); ?>
-        <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Find existing local servers</button>
+        <?php if ($platform!=='dsm'): ?>
+          <label>Folder to scan (optional)
+            <input name="scan_root" maxlength="1024" placeholder="<?= $platform==='windows'?'D:\MinecraftServers':'/srv/minecraft' ?>" style="min-width:18rem">
+          </label>
+        <?php endif; ?>
+        <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>><?= $platform==='dsm'?'Find existing local servers':'Scan local servers' ?></button>
       </form>
     </details>
   </details>
@@ -448,20 +453,28 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <?php endif; ?>
   <?php endif; ?>
   <?php if (!empty($selectedJob['result']['found'])): ?>
-    <h3>Discovered servers</h3>
-    <p class="muted">Scans are bounded and limited to configured storage locations. Discovery does not modify a server.</p>
+    <h3>Discovered local servers</h3>
+    <p class="muted">Found <?= count($selectedJob['result']['found']) ?> Minecraft installation(s). This scan reads local directories but does not copy, change or start any server.</p>
     <?php foreach($selectedJob['result']['found'] as $found): ?>
       <div class="server-row"><div><strong><?= h($found['name']??'Server') ?></strong>
         <code><?= h($found['path']??'') ?></code>
         <small><?= h(ucfirst($found['edition']??'java').' · '.$found['deployment']) ?></small></div>
-        <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_import">
-          <?php foreach(['name','path','edition','deployment','software'] as $field): ?><input type="hidden" name="<?= h($field) ?>" value="<?= h($found[$field]??'') ?>"><?php endforeach; ?>
-          <?php if (($found['deployment']??'')==='container'): ?><label>Existing container name <input name="container_name" required placeholder="minecraft-server"></label><?php endif; ?>
-          <button class="subtle">Import</button>
-        </form></div>
+        <?php if (!empty($found['registered'])): ?>
+          <strong>Already registered</strong>
+        <?php else: ?>
+          <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_import">
+            <?php foreach(['name','path','edition','deployment','software'] as $field): ?><input type="hidden" name="<?= h($field) ?>" value="<?= h($found[$field]??'') ?>"><?php endforeach; ?>
+            <?php if (($found['deployment']??'')==='container'): ?><label>Existing container name <input name="container_name" required placeholder="minecraft-server"></label><?php endif; ?>
+            <button class="subtle" data-confirm="Register this local server with mcmanager? Existing Minecraft files remain in place; mcmanager adds a small ownership/registration metadata file.">Register (keep files in place)</button>
+          </form>
+        <?php endif; ?></div>
     <?php endforeach; ?>
   <?php endif; ?>
-  <?php if (!empty($selectedJob['result']) && empty($selectedJob['result']['system']) && empty($selectedJob['result']['found'])): ?>
+  <?php if (($selectedJob['operation']??'')==='discover' &&
+      ($selectedJob['state']??'')==='succeeded' &&
+      isset($selectedJob['result']['found']) && empty($selectedJob['result']['found'])): ?>
+    <p class="hint">No Minecraft installations found in the selected local folder. Try the directory containing server.properties, or its parent. Only a bounded number of subfolders are scanned.</p>
+  <?php elseif (!empty($selectedJob['result']) && empty($selectedJob['result']['system']) && empty($selectedJob['result']['found'])): ?>
     <pre class="log-preview"><?= h(json_encode($selectedJob['result'],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES)) ?></pre>
   <?php endif; ?>
 </section>
@@ -568,6 +581,20 @@ ls -l /var/run/docker.sock</pre>
       </div>
       <label>Installation <select name="deployment"><option value="native">Native local server (no Docker)</option><?php if ($dockerAvailable): ?><option value="container">DSM Container Manager</option><?php endif; ?></select></label>
     </div>
+    <?php if ($platform==='windows'||$platform==='linux'): ?>
+      <details class="manager-install-launch">
+        <summary>Installation location — choose default or custom folder</summary>
+        <p class="hint">Default: <code><?= h(manager_instances_root()) ?></code>. To install on another disk, enter an existing absolute folder on this <?= $platform==='windows'?'Windows':'Linux' ?> host. mcmanager creates a separate server-ID subfolder there; it never overwrites an existing installation. The worker and web-server account must have appropriate local access.</p>
+        <?php if ($platform==='windows'): ?>
+          <p class="hint">If using the Windows Service, LocalService needs Modify permission on a dedicated custom folder. An administrator can grant this once with the packaged <code>packaging/windows/grant-storage.ps1</code> script; no password is stored. Never grant permissions to an entire drive.</p>
+        <?php else: ?>
+          <p class="hint">Grant the Linux PHP worker access to the chosen folder before creating a server. Do not use system directories or a network mount.</p>
+        <?php endif; ?>
+        <label>Custom parent folder (optional)
+          <input name="install_parent" maxlength="1024" placeholder="<?= $platform==='windows'?'D:\MinecraftServers':'/srv/minecraft' ?>">
+        </label>
+      </details>
+    <?php endif; ?>
     <div class="form-row">
       <label>Version <input name="version" value="latest" maxlength="48" placeholder="latest or e.g. 26.2"></label>
       <label>Port <input name="port" type="number" min="1024" max="65535" value="25565" required></label>
@@ -599,7 +626,7 @@ ls -l /var/run/docker.sock</pre>
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
-  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally; native Bedrock installation is being certified separately.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> All newly created server data stays under mcmanager-owned storage.</p>
+  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally; native Bedrock installation is being certified separately.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
 </section>
 
 </details>

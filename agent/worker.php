@@ -93,6 +93,56 @@ function worker_root(): string {
     if (!$resolved || is_link($path) || !is_writable($resolved)) throw new RuntimeException('Unsafe instances storage.');
     return $resolved;
 }
+/** The worker, never web PHP, checks access to an administrator-selected
+ * existing directory. Reject symlink/junction aliases, network paths and
+ * locations inside the application or the private config directory.
+ */
+function worker_local_folder_root(string $submitted,bool $forInstallation): string {
+    $input=manager_local_folder_input($submitted,$forInstallation?'installation':'scan');
+    if (!is_dir($input) || is_link($input))
+        throw new RuntimeException('The selected local directory does not exist or is a symlink. Create a dedicated directory on this server first.');
+    $resolved=realpath($input);
+    if ($resolved===false)
+        throw new RuntimeException('The worker cannot resolve this local directory.');
+    $normalize=static fn(string $s):string=>rtrim(str_replace('\\','/',$s),'/');
+    $physical=$normalize($resolved);
+    $requested=$normalize($input);
+    $same=PHP_OS_FAMILY==='Windows'
+        ? strcasecmp($physical,$requested)===0 : strcmp($physical,$requested)===0;
+    if (!$same)
+        throw new RuntimeException('The selected directory resolves through a junction, symlink or alias; select its real local path instead.');
+    $protected=[realpath(dirname(__DIR__)),realpath(data_dir())];
+    if (PHP_OS_FAMILY==='Windows') {
+        foreach(['WINDIR','ProgramFiles','ProgramFiles(x86)'] as $var) {
+            $v=getenv($var);
+            if (is_string($v)&&$v!=='')$protected[]=realpath($v);
+        }
+    } else {
+        foreach(['/etc','/bin','/boot','/dev','/proc','/run','/sys','/usr'] as $value)
+            $protected[]=realpath($value);
+    }
+    foreach($protected as $block) {
+        if (!is_string($block)||$block==='')continue;
+        $no=$normalize($block);
+        if (PHP_OS_FAMILY==='Windows') {
+            if (strcasecmp($physical,$no)===0 ||
+                strncasecmp($physical.'/',$no.'/',strlen($no)+1)===0)
+                throw new RuntimeException('The selected directory is protected application, system or private configuration storage.');
+        } elseif ($physical===$no || str_starts_with($physical.'/',$no.'/')) {
+            throw new RuntimeException('The selected directory is protected application, system or private configuration storage.');
+        }
+    }
+    if ($forInstallation && !is_writable($resolved))
+        throw new RuntimeException('The local management worker cannot write to the selected installation directory. Grant its service account access first.');
+    if (!$forInstallation && !is_readable($resolved))
+        throw new RuntimeException('The local management worker cannot scan this directory.');
+    return $resolved;
+}
+function worker_location_matches(string $a,string $b): bool {
+    $a=rtrim(str_replace('\\','/',$a),'/');
+    $b=rtrim(str_replace('\\','/',$b),'/');
+    return PHP_OS_FAMILY==='Windows'?strcasecmp($a,$b)===0:$a===$b;
+}
 function worker_state(string $id,array $state): array {
     $state['server_id']=$id;$state['checked']=time();
     worker_write(manager_base()."/states/$id.json",$state);
@@ -448,10 +498,24 @@ function worker_install(string $id,array $post,array &$native): array {
     $server=worker_server($id);
     if (($server['install_state']??'')!=='pending') throw new RuntimeException('No pending installation for this server.');
     $opts=manager_install_input($post+['eula'=>'1']);
+    // Validate the chosen local storage BEFORE network downloads, Java
+    // installation, extraction or mutation. A custom disk has its own
+    // space and service-account permissions, independent of default storage.
+    $requestedParent=(string)($opts['install_parent']??'');
+    $root=$requestedParent===''?worker_root():
+        worker_local_folder_root($requestedParent,true);
+    $path=$root.DIRECTORY_SEPARATOR.$id;
+    $registered=(string)($server['path']??'');
+    if (!worker_location_matches($registered,manager_install_folder($opts,$id)) ||
+        ($requestedParent!=='' && !worker_location_matches($registered,$path)) ||
+        ($requestedParent==='' &&
+            !worker_location_matches(realpath(dirname($registered))?:'',$root)) ||
+        ($server['install_parent']??'')!==$requestedParent)
+        throw new RuntimeException('The registered Minecraft installation location does not match the signed request or its actual host folder.');
+    $available=@disk_free_space($root);
+    if (is_numeric($available) && $available<1073741824)
+        throw new RuntimeException('At least 1 GiB free disk space is required on the selected Minecraft installation drive.');
     $health=worker_diagnostics();
-    if (!empty($health['free_storage']) && $health['free_storage']<1073741824) {
-        throw new RuntimeException('At least 1 GiB free storage is required to install Minecraft.');
-    }
     $existing=app_config()['servers']??[];
     $allocated=0;
     foreach($existing as $sid=>$other) {
@@ -471,7 +535,7 @@ function worker_install(string $id,array $post,array &$native): array {
     foreach(['edition','deployment','name','software','port','memory'] as $k) {
         if ((string)($server[$k]??'')!==(string)$opts[$k]) throw new RuntimeException('Installation request does not match registered server.');
     }
-    worker_progress(10,'Checking NAS compatibility and preparing server storage');
+    worker_progress(10,'Checking local host compatibility and selected Minecraft storage');
     // Do not create an incomplete world directory if the required Java runtime
     // is absent. Preflight JRE architecture/version before provisioning storage.
     $artifact=null;
@@ -490,8 +554,6 @@ function worker_install(string $id,array $post,array &$native): array {
         if ($runtime['major']<$min)
             throw new RuntimeException('No compatible Java runtime installed. Minecraft requires Java '.$min.'.');
     }
-    $root=worker_root();
-    $path=$root.DIRECTORY_SEPARATOR.$id;
     if (file_exists($path)||is_link($path))
         worker_retry_empty_bedrock_dir($path,$opts,$post);
     if (file_exists($path) || is_link($path)) throw new RuntimeException('Server directory already exists.');
@@ -721,15 +783,23 @@ function worker_native_stop(string $id,array &$native): void {
     unset($native[$id]);
 }
 
-function worker_discover(): array {
-    $roots=[worker_root()];
-    if (mc_platform()==='dsm') {
+function worker_discover(?string $selectedRoot=null): array {
+    // A supplied root is an explicit local-only advanced scan, not an
+    // implicit scan of the whole operating system or a network share.
+    $roots=$selectedRoot!==null && $selectedRoot!==''?
+        [worker_local_folder_root($selectedRoot,false)]:[worker_root()];
+    if (($selectedRoot===null||$selectedRoot==='') && mc_platform()==='dsm') {
         foreach(['/volume1/docker','/volume1/minecraft','/volume2/docker','/volume2/minecraft'] as $root) {
             if (is_dir($root) && is_readable($root)) $roots[]=$root;
         }
     }
-    $found=[];$seen=[];
-    $walk=function(string $dir,int $depth) use (&$walk,&$found,&$seen):void {
+    $found=[];$seen=[];$registered=[];
+    foreach((app_config()['servers']??[]) as $row) {
+        if (!is_array($row))continue;
+        $path=realpath((string)($row['path']??''));
+        if ($path!==false)$registered[strtolower(str_replace('\\','/',$path))]=true;
+    }
+    $walk=function(string $dir,int $depth) use (&$walk,&$found,&$seen,$registered):void {
         if ($depth>3 || count($found)>=100 || is_link($dir)) return;
         $real=realpath($dir);
         if (!$real || isset($seen[$real])) return;
@@ -737,8 +807,10 @@ function worker_discover(): array {
         if (is_file($dir.'/server.properties') && !is_link($dir.'/server.properties')) {
             $edition=is_file($dir.'/bedrock_server.exe')||is_file($dir.'/bedrock_server')||
                 (is_dir($dir.'/worlds')&&is_file($dir.'/valid_known_packs.json'))?'bedrock':'java';
-            $software=is_file($dir.'/paper.jar')||is_file($dir.'/paper.yml')?'paper':'vanilla';
+            $software=$edition==='bedrock'?'bedrock':
+                ((is_file($dir.'/paper.jar')||is_file($dir.'/paper.yml'))?'paper':'vanilla');
             $found[]=['path'=>$real,'edition'=>$edition,'software'=>$software,
+                'registered'=>isset($registered[strtolower(str_replace('\\','/',$real))]),
                 // Discovery never assumes ownership of a Docker container
                 // from a directory name. Container adoption requires separate
                 // explicit verification on DSM.
@@ -756,11 +828,20 @@ function worker_discover(): array {
     return $found;
 }
 function worker_safe_remove(string $dir,string $id): void {
-    $root=worker_root();
-    $expected=$root.DIRECTORY_SEPARATOR.$id;
-    if (!preg_match('/^[a-f0-9]{12}$/D',$id) ||
-        realpath($dir)!==realpath($expected) || $dir===$root) {
+    if (!preg_match('/^[a-f0-9]{12}$/D',$id))
         throw new RuntimeException('Refusing to remove data outside an owned installation.');
+    $row=worker_server($id);
+    $parent=(string)($row['install_parent']??'');
+    $root=$parent===''?worker_root():worker_local_folder_root($parent,true);
+    $expected=$root.DIRECTORY_SEPARATOR.$id;
+    $metadata=worker_meta($dir);
+    if (!is_dir($dir)||is_link($dir)||
+        !worker_location_matches($dir,(string)($row['path']??''))||
+        !worker_location_matches(realpath($dir)?:'',realpath($expected)?:'')||
+        ($parent!=='' && !worker_location_matches($dir,$expected))||
+        ($metadata['manager_id']??'')!==$id||
+        !empty($metadata['imported'])) {
+        throw new RuntimeException('Refusing to remove data outside the exact owned Minecraft server directory.');
     }
     $iterator=new RecursiveIteratorIterator(
         new RecursiveDirectoryIterator($dir,FilesystemIterator::SKIP_DOTS),
@@ -778,7 +859,10 @@ function worker_safe_remove(string $dir,string $id): void {
 }
 function worker_run_operation(string $op,string $id,array $params,array &$native): array {
     if ($op==='diagnostics') return ['system'=>worker_diagnostics()];
-    if ($op==='discover') return ['found'=>worker_discover()];
+    if ($op==='discover') {
+        $scan=(string)($params['scan_root']??'');
+        return ['found'=>worker_discover($scan)];
+    }
     if ($op==='install_java') return ['runtime'=>worker_install_java((int)($params['major']??0),$params)];
     if ($op==='install') return worker_install($id,$params,$native);
     if ($op==='install_server_jar') {

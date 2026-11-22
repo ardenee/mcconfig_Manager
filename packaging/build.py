@@ -135,7 +135,8 @@ def zip_web(files: dict[str, bytes], out: Path) -> Path:
     windows = {}
     for name in ("packaging/windows/McManagerService.cs",
                  "packaging/windows/install-service.ps1",
-                 "packaging/windows/upgrade-service.ps1"):
+                 "packaging/windows/upgrade-service.ps1",
+                 "packaging/windows/grant-storage.ps1"):
         path_source = ROOT / name
         if not path_source.is_file() or path_source.is_symlink():
             raise RuntimeError("Missing Windows service packaging source: " + name)

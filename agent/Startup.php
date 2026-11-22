@@ -78,7 +78,7 @@ function worker_configure_startup(string $id,string $path,array $meta,array $par
     }
     if (!empty($health['ram_total']) &&
         ($allocated+$settings['memory'])*1048576>$health['ram_total']*.8) {
-        throw new RuntimeException('Configured Minecraft servers would exceed 80% of NAS physical memory.');
+        throw new RuntimeException('Configured Minecraft servers would exceed 80% of local host physical memory.');
     }
     foreach($settings as $key=>$value)$meta[$key]=$value;
     worker_save_meta($path,$meta);

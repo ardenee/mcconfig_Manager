@@ -238,7 +238,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if ($action === 'manager_diagnostics' || $action === 'manager_discover') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
-            $job=manager_enqueue($action === 'manager_diagnostics'?'diagnostics':'discover');
+            if ($action==='manager_discover') {
+                $scan=request_string($_POST,'scan_root',1024);
+                if ($scan!=='')$scan=manager_local_folder_input($scan,'server scan');
+                $job=manager_enqueue('discover',['scan_root'=>$scan]);
+            } else $job=manager_enqueue('diagnostics');
             redirect('manager','&job='.$job);
         }
         if ($action === 'manager_install_java') {
@@ -488,7 +492,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ($row['deployment']??'')!=='native') {
                 throw new RuntimeException('Select a failed locally managed Windows Bedrock installation.');
             }
-            $expected=rtrim(manager_instances_root(),'/\\').DIRECTORY_SEPARATOR.$id;
+            $expected=manager_install_folder($row,$id);
             $path=(string)($row['path']??'');
             if (str_replace('\\','/',strtolower($path))!==
                 str_replace('\\','/',strtolower($expected))||
@@ -499,7 +503,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $options=manager_install_input([
                 'name'=>$row['name'],'edition'=>'bedrock','software'=>'bedrock',
                 'deployment'=>'native','version'=>$row['version']??'latest',
-                'port'=>(string)$row['port'],'memory'=>(string)$row['memory'],'eula'=>'1'
+                'port'=>(string)$row['port'],'memory'=>(string)$row['memory'],'eula'=>'1',
+                'install_parent'=>(string)($row['install_parent']??'')
             ]);
             $config['servers'][$id]['install_state']='pending';
             save_config($config);
@@ -531,8 +536,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $installParams['bedrock_upload_name']=$uploaded['filename'];
             }
             $id=bin2hex(random_bytes(6));
-            $root=manager_instances_root();
-            $path=rtrim($root,'/\\').DIRECTORY_SEPARATOR.$id;
+            $path=manager_install_folder($options,$id);
             $config['servers'][$id]=$options+['path'=>$path,'jar'=>'server.jar',
                 'worlds_path'=>'','install_state'=>'pending'];
             save_config($config);
@@ -832,9 +836,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.23">
-<script src="assets/app.js?v=0.5.23" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.23" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.24">
+<script src="assets/app.js?v=0.5.24" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.24" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
