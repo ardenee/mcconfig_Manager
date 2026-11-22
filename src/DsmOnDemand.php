@@ -167,7 +167,7 @@ function dsm_approval_container_assessment(array $details,array $server,string $
                         $mount['Target']??$mount['target']??$mount['mount_point']??
                         $mount['container_path']??'');
                     $source=(string)($mount['Source']??$mount['source']??
-                        $mount['host_volume_file']??$mount['host_path']??'');
+                        $mount['host_volume_file']??$mount['host_absolute_path']??$mount['host_path']??'');
                 }
                 if (rtrim($destination,'/')!=='/data')continue;
                 $matched=$isMatch($source);
@@ -239,7 +239,7 @@ function dsm_approval_once(
     string $account,string $password,string $operation,
     ?array $server=null,string $otp='',?callable $send=null
 ): array {
-    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify','cleanup'],true)) {
+    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify','bedrock-repair','cleanup'],true)) {
         throw new InvalidArgumentException('Unsupported DSM one-time operation.');
     }
     if (!preg_match('/^[\w.@-]{1,64}$/D',$account) ||
@@ -249,10 +249,10 @@ function dsm_approval_once(
     if ($otp!=='' && !preg_match('/^[0-9]{6,8}$/D',$otp)) {
         throw new InvalidArgumentException('Enter a valid DSM one-time verification code.');
     }
-    if (in_array($operation,['start','stop','bedrock-verify','cleanup'],true) && (!$server ||
+    if (in_array($operation,['start','stop','bedrock-verify','bedrock-repair','cleanup'],true) && (!$server ||
         ($server['deployment']??'native')!=='container' ||
         !in_array(($server['install_state']??'ready'),
-            $operation==='bedrock-verify'||$operation==='cleanup'?['ready','imported','unverified']:['ready','imported'],true))) {
+            $operation==='bedrock-verify'||$operation==='bedrock-repair'||$operation==='cleanup'?['ready','imported','unverified']:['ready','imported'],true))) {
         throw new RuntimeException('Select a registered Minecraft container; start/stop requires a verified, ready server.');
     }
     dsm_login_rate_guard();
@@ -287,6 +287,9 @@ function dsm_approval_once(
         };
         if (in_array($operation,['bedrock-image','bedrock-pull','bedrock-poll','bedrock-create'],true)) {
             return dsm_bedrock_api_action($api,$operation,$server);
+        }
+        if ($operation==='bedrock-repair') {
+            return dsm_bedrock_repair_api_action($api,$server);
         }
         if ($operation==='bedrock-verify') {
             $name=dsm_approval_container_name((string)($server['container_name']??''));

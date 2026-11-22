@@ -8,7 +8,7 @@ declare(strict_types=1);
 function dsm_wizard_step(array $post,array &$config,?callable $send=null): array {
     $step=request_string($post,'dsm_operation',24);
     if (!in_array($step,['bedrock-image','bedrock-pull','bedrock-poll',
-        'bedrock-create','bedrock-verify','start'],true)) {
+        'bedrock-create','bedrock-verify','bedrock-repair','start'],true)) {
         throw new InvalidArgumentException('Unsupported Bedrock wizard operation.');
     }
     $user=request_string($post,'dsm_account',64);
@@ -53,13 +53,20 @@ function dsm_wizard_step(array $post,array &$config,?callable $send=null): array
                     throw new RuntimeException('UDP port '.$row['port'].' is already assigned to another Bedrock server in mcmanager. Choose a different port.');
                 }
             }
-        } elseif (in_array($step,['bedrock-verify','start'],true)) {
+        } elseif (in_array($step,['bedrock-verify','bedrock-repair','start'],true)) {
             $serverId=console_server_id(request_string($post,'server_id',64));
             $row=$config['servers'][$serverId]??null;
             if (!is_array($row) || ($row['control_mode']??'')!=='dsm-on-demand' ||
                 ($row['edition']??'')!=='bedrock' || ($row['deployment']??'')!=='container') {
                 throw new RuntimeException('The Bedrock server is not registered. Check Server Manager before retrying.');
             }
+        }
+        if ($step==='bedrock-repair' &&
+            ((!function_exists('dsm_cleanup_eligible')||!dsm_cleanup_eligible($row,$serverId)) ||
+             ($row['install_state']??'')!=='unverified' ||
+             request_string($post,'repair_confirm',32)!=='REPLACE UNSTARTED CONTAINER' ||
+             request_string($post,'bedrock_name',80)!==($row['name']??''))) {
+            throw new RuntimeException('Repair requires an unverified managed Bedrock server and explicit confirmation.');
         }
         $result=dsm_approval_once($user,$password,$step,$row,$otp,$send);
         if ($step==='bedrock-create') {
@@ -76,7 +83,7 @@ function dsm_wizard_step(array $post,array &$config,?callable $send=null): array
             save_config($config);
             $result['server_id']=$serverId;
             unset($result['server']);
-        } elseif ($step==='bedrock-verify') {
+        } elseif ($step==='bedrock-verify'||$step==='bedrock-repair') {
             $config['servers'][$serverId]['install_state']='ready';
             save_config($config);
             $result['server_id']=$serverId;
@@ -121,7 +128,14 @@ function dsm_wizard_error_help(string $message,string $step): array {
         return ['title'=>'NAS storage permission required',
             'help'=>'The mcconfig Web Station service must be allowed to create folders under its managed Minecraft instances directory. Check this package directory in DSM File Station or the package permissions, then Retry. Do not grant broad access to Docker.'];
     }
-    if (str_contains($s,'mount')||str_contains($s,'verif')) {
+    if ($step==='bedrock-repair' && str_contains($s,'never-started')) {
+        return ['title'=>'Repair stopped to protect Minecraft data',
+            'help'=>'DSM cannot prove the previous container was never started. The old container and anonymous volume were left intact. Inspect or back up the anonymous volume in Container Manager before considering manual replacement.'];
+    }
+    if (str_contains($s,'/data bind mount mismatch') && str_contains($s,'@docker/volumes/')) {
+        return ['title'=>'Bedrock container has an anonymous Docker volume',
+            'help'=>'The installed container was created without the required host folder mapping. Use Repair incorrect /data mount below to replace it only if DSM proves it was never started. The action requires separate confirmation and preserves the mcmanager world directory.'];
+    }    if (str_contains($s,'mount')||str_contains($s,'verif')) {
         return ['title'=>'Container needs verification',
             'help'=>'Compare the Expected host path with the DSM /data source shown above. If the paths differ, correct the container volume binding in DSM Container Manager before retrying. If they refer to the same folder but PHP cannot resolve the DSM path, check package filesystem permissions, symlink aliases and Web Station open_basedir. Do not remove or recreate the server to troubleshoot this. The wizard will not start an unverified container.'];
     }

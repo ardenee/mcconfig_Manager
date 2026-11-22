@@ -107,11 +107,144 @@ function dsm_bedrock_profile(array $server,string $imageRef='itzg/minecraft-bedr
             ['container_port'=>19132,'host_port'=>$port,'type'=>'udp']
         ],
         'volume_bindings'=>[
-            ['host_volume_file'=>$root,'mount_point'=>'/data','type'=>'rw','is_directory'=>true]
+            ['host_absolute_path'=>$root,'mount_point'=>'/data','type'=>'rw']
         ],
         'shortcut'=>['enable_shortcut'=>false,'enable_status_page'=>false,'enable_web_page'=>false,'web_page_url'=>'']
     ];
 }
+/**
+ * Replace only an unverified, never-started mcmanager Bedrock container that
+ * accidentally received Docker's anonymous /data volume. The admin explicitly
+ * confirms the action. The server folder is retained and reused.
+ *
+ * If DSM cannot prove container identity, image, Docker volume source and the
+ * "created, never started" state, refuse the replacement. This operation never
+ * removes worlds, Docker images or volumes explicitly.
+ */
+function dsm_bedrock_repair_api_action(callable $api,array $server): array {
+    $name=(string)($server['container_name']??'');
+    if (($server['control_mode']??'')!=='dsm-on-demand' ||
+        ($server['install_state']??'')!=='unverified' ||
+        ($server['edition']??'')!=='bedrock' ||
+        ($server['deployment']??'')!=='container' ||
+        !preg_match('/^mcmanager-bedrock-([a-f0-9]{12})$/D',$name,$matches)) {
+        throw new RuntimeException('Repair is restricted to an unverified mcmanager-created Bedrock server.');
+    }
+    $base=realpath(manager_instances_root());
+    $folder=realpath((string)($server['path']??''));
+    if (!$base||!$folder||$folder!==$base.DIRECTORY_SEPARATOR.$matches[1]||
+        is_link($folder)||!is_dir($folder)) {
+        throw new RuntimeException('Managed server storage cannot be verified; repair has not changed the container.');
+    }
+    $installed=dsm_bedrock_image_check($api);
+    if (!$installed['ready']) {
+        throw new RuntimeException('The Bedrock image is missing; repair has made no changes.');
+    }
+    // A valid replacement profile is computed before touching the old container.
+    $profile=dsm_bedrock_profile($server,$installed['image']);
+    $list=function()use($api):array {
+        $data=dsm_approval_checked($api([
+            'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'list',
+            'limit'=>'-1','offset'=>'0','type'=>'all'
+        ]),'Bedrock repair container list');
+        if (!is_array($data['containers']??null))throw new RuntimeException(
+            'DSM did not return a container list; repair was refused.');
+        return $data['containers'];
+    };
+    $entry=null;
+    foreach($list() as $item) {
+        if (is_array($item)&&ltrim((string)($item['name']??''),'/')===$name) {
+            $entry=$item;break;
+        }
+    }
+    if ($entry!==null) {
+        $details=dsm_approval_checked($api([
+            'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'get',
+            'name'=>json_encode($name,JSON_THROW_ON_ERROR)
+        ]),'Bedrock repair inspection');
+        $assessment=dsm_approval_container_assessment($details,$server,$name);
+        if ($assessment['verified']) {
+            return ['operation'=>'bedrock-repair','verified'=>true,
+                'message'=>'The existing container already has the correct bind mount; nothing was replaced.'];
+        }
+        if ($assessment['name']!=='confirmed'||$assessment['image']!=='confirmed'||
+            $assessment['mount']!=='mismatch') {
+            throw new RuntimeException('Container identity, image or mount cannot be proved. Repair refused; nothing was deleted.');
+        }
+        // Only an actual Docker volume at /data is eligible. Never replace an
+        // existing bind mount that may be deliberate or hold user data.
+        $sections=[$details];
+        $volume=false;$otherDataMount=false;$state='';
+        $everStarted=false;$noStartTimestamp=false;
+        for ($idx=0;$idx<count($sections) && $idx<32;$idx++) {
+            $section=$sections[$idx];
+            if (!is_array($section)) continue;
+            if ($idx<16)foreach(['details','container','info'] as $key) {
+                if (is_array($section[$key]??null))$sections[]=$section[$key];
+            }
+            $status=$section['State']['Status']??$section['state']['status']??
+                $section['State']['status']??'';
+            if (is_string($status)&&$status!=='')$state=strtolower($status);
+            $runtime=$section['State']??$section['state']??null;
+            if (is_array($runtime)) {
+                if (($runtime['Running']??$runtime['running']??false)===true)
+                    $everStarted=true;
+                $started=$runtime['StartedAt']??$runtime['started_at']??null;
+                if (is_string($started) && $started!=='') {
+                    if (preg_match('/^(?:0001-01-01|1970-01-01)T00:00:00(?:\\.0+)?Z$/D',$started))
+                        $noStartTimestamp=true;
+                    else $everStarted=true;
+                }
+            }
+            foreach (($section['Mounts']??[]) as $mount) {
+                if (!is_array($mount) ||
+                    (($mount['Destination']??$mount['Target']??'')!=='/data'))continue;
+                $source=(string)($mount['Source']??'');
+                $type=strtolower((string)($mount['Type']??''));
+                if (($type==='volume'||$type==='') &&
+                    preg_match('~^/volume[0-9]+/@docker/volumes/[a-f0-9]{64}/_data/?$~iD',$source)) {
+                    $volume=true;
+                } else $otherDataMount=true;
+            }
+        }
+        $listedState=strtolower((string)($entry['status']??$entry['state']??''));
+        // 'created' is Docker's never-started state. "exited"/"stopped" does
+        // not prove the volume was unused; those must be recovered manually.
+        if ($everStarted || ($state!=='created' && $listedState!=='created' && !$noStartTimestamp)) {
+            throw new RuntimeException('Container has not been proven never-started (DSM state: '.
+                substr($state?:$listedState?:'unknown',0,32).'). Repair refused to protect possible world data.');
+        }
+        if (!$volume||$otherDataMount) {
+            throw new RuntimeException('The old /data mount is not confirmed to be an anonymous Docker volume. No replacement was made.');
+        }
+        dsm_approval_checked($api([
+            'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'delete',
+            'name'=>json_encode($name,JSON_THROW_ON_ERROR),
+            'force'=>'false','preserve_profile'=>'false'
+        ]),'Remove never-started malformed Bedrock container');
+        foreach($list() as $item) {
+            if (is_array($item)&&ltrim((string)($item['name']??''),'/')===$name) {
+                throw new RuntimeException('DSM still lists the old container. Nothing was recreated; retry after it disappears.');
+            }
+        }
+    }
+    // Also recovers a prior repair interrupted between delete and create.
+    dsm_approval_checked($api([
+        'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'create',
+        'is_run_instantly'=>'false',
+        'profile'=>json_encode($profile,JSON_THROW_ON_ERROR|JSON_UNESCAPED_SLASHES)
+    ]),'Create replacement with verified Bedrock bind mount');
+    $created=dsm_approval_checked($api([
+        'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'get',
+        'name'=>json_encode($name,JSON_THROW_ON_ERROR)
+    ]),'Inspect replacement Bedrock container');
+    if (!dsm_approval_container_matches($created,$server,$name)) {
+        throw new RuntimeException('Replacement was created but DSM has not confirmed its /data bind mount. It was left stopped, and no world files were removed. '.dsm_approval_container_failure($created,$server,$name));
+    }
+    return ['operation'=>'bedrock-repair','verified'=>true,
+        'message'=>'Recreated the never-started Bedrock container with the correct persistent /data bind mount. Existing managed files were retained.'];
+}
+
 function dsm_bedrock_api_action(callable $api,string $operation,?array $options): array {
     if ($operation==='bedrock-image') {
         $check=dsm_bedrock_image_check($api);

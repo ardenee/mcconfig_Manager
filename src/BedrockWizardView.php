@@ -32,7 +32,7 @@ $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
       <input type="hidden" name="action" value="dsm_wizard">
       <input type="hidden" name="bedrock_id" value="<?= h($resumeServer?$resumeId:bin2hex(random_bytes(6))) ?>">
       <?php if ($resumeServer): ?>
-      <div class="alert warning">Resuming the existing Bedrock server <strong><?= h($resumeServer['name']??$resumeId) ?></strong>. No new container or image will be created. The wizard will verify its identity and storage before attempting to start it.</div>
+      <div class="alert warning">Resuming the existing Bedrock server <strong><?= h($resumeServer['name']??$resumeId) ?></strong>. The wizard first verifies the existing container. If DSM created an incorrect anonymous /data volume, a separately confirmed repair is available only for containers DSM proves were never started. Your managed server files are not deleted.</div>
       <?php endif; ?>
       <div class="mc-wizard-fields">
         <label>Server name
@@ -97,6 +97,7 @@ $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
         <div class="mc-wizard-recovery-actions">
           <button type="button" class="subtle" data-wizard-retry>Retry this step</button>
           <button type="button" class="subtle" data-wizard-recheck hidden>Check image again</button>
+          <button type="button" class="subtle" data-wizard-repair hidden>Repair incorrect /data mount</button>
         </div>
       </div>
       <div class="mc-wizard-complete" data-wizard-complete hidden role="status">

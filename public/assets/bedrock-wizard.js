@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const stopButton = $('[data-wizard-stop]');
   const retry = $('[data-wizard-retry]');
   const recheck = $('[data-wizard-recheck]');
+  const repair = $('[data-wizard-repair]');
   const progress = $('[data-wizard-progress]');
   const heading = $('[data-wizard-heading]');
   const fraction = $('[data-wizard-fraction]');
@@ -115,6 +116,7 @@ document.addEventListener('DOMContentLoaded', () => {
     halted = false;
     errorBox.hidden = true;
     recheck.hidden = true;
+    if (repair) repair.hidden = true;
     completed.hidden = true;
     lock(true);
 
@@ -170,6 +172,20 @@ document.addEventListener('DOMContentLoaded', () => {
           if (!created.server_id) throw new Error('Container creation returned no server registration ID. Inspect Container Manager before creating a second server.');
           serverId = created.server_id;
           phase = 'verify';
+        } else if (phase === 'repair') {
+          showStage(3, 'Repairing an incorrect Docker /data mount on a never-started container...');
+          try {
+            await post('bedrock-repair', {
+              server_id: serverId,
+              repair_confirm: 'REPLACE UNSTARTED CONTAINER'
+            });
+          } catch (error) {
+            // A partial network failure may occur after DSM replaced the
+            // container. Always inspect on retry; never replay deletion.
+            phase = 'verify';
+            throw error;
+          }
+          phase = 'verify';
         } else if (phase === 'verify') {
           showStage(3, 'Checking the container image and persistent /data folder…');
           await post('bedrock-verify', {server_id: serverId});
@@ -210,6 +226,10 @@ document.addEventListener('DOMContentLoaded', () => {
         'Correct the reported problem and select Retry. Completed steps will not be repeated, and no existing containers will be removed.';
       errorBox.hidden = false;
       recheck.hidden = !['pull','poll','confirm-image'].includes(phase);
+      if (repair) {
+        repair.hidden = !(serverId && phase === 'verify' &&
+          /\/data bind mount mismatch/.test(error.message || ''));
+      }
       status.textContent = 'Action required: ' + (error.message || 'See the error below.');
       if (phase === 'poll' || phase === 'confirm-image') {
         errorHelp.textContent += ' The image download may still be running in Container Manager.';
@@ -252,6 +272,19 @@ document.addEventListener('DOMContentLoaded', () => {
   retry.addEventListener('click', () => {
     if (busy || !retryReady()) return;
     status.textContent = 'Retry requested. Rechecking the unfinished operation…';
+    run();
+  });
+  repair?.addEventListener('click', () => {
+    if (busy || !retryReady()) return;
+    // This is a destructive replacement of a *never-started* container
+    // configuration only; the backend independently verifies all conditions.
+    if (!window.confirm || !window.confirm(
+      'Replace only this mcmanager Bedrock container if DSM proves it was never started? ' +
+      'The old anonymous Docker volume may be orphaned or removed by DSM; ' +
+      'any files it contains are NOT copied. Existing mcmanager world files are preserved. ' +
+      'The new container must pass /data verification before it can start.'
+    )) return;
+    phase = 'repair';
     run();
   });
   recheck.addEventListener('click', () => {
