@@ -2,7 +2,7 @@
 
 **mcmanager** is a web-based manager for Minecraft Java Edition and Bedrock Dedicated Servers running on the **same Windows PC, Linux machine or Synology NAS** as mcmanager. It provides a single interface to install, configure, monitor and control supported local Minecraft servers.
 
-The GitHub repository is named **mcconfig** for compatibility with the original Synology package. The application is written in PHP and does not require a database.
+The project retains the original **mcconfig** Synology package identifier for upgrade compatibility. The GitHub repository is **[ardenee/mcconfig_Manager](https://github.com/ardenee/mcconfig_Manager)**. The application is written in PHP and does not require a database.
 
 ## Features
 
@@ -77,4 +77,4 @@ The package retains the internal name `mcconfig` and application address `/mccon
 
 [MIT](LICENSE)
 
-Project website: [arden.ie](https://www.arden.ie/) · [GitHub](https://github.com/ardenee/mcconfig)
+Project website: [arden.ie](https://www.arden.ie/) · [GitHub](https://github.com/ardenee/mcconfig_Manager)
