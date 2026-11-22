@@ -242,8 +242,9 @@ function manager_install_input(array $post): array {
     }
     if ($deployment==='native' &&
         !(($edition==='java' && in_array($software,['vanilla','paper'],true)) ||
-          ($edition==='bedrock' && $software==='bedrock' && $platform==='windows'))) {
-        throw new InvalidArgumentException('Native installation supports Java Vanilla/Paper and Windows Bedrock. Other native installers are not yet implemented.');
+          ($edition==='bedrock' && $software==='bedrock' &&
+            ($platform==='windows' || ($platform==='linux' && mc_linux_bedrock_supported()))))) {
+        throw new InvalidArgumentException('Native installation supports Java Vanilla/Paper and official Windows/Ubuntu Bedrock on supported hosts.');
     }
     $installParent=request_string($post,'install_parent',1024);
     if ($installParent!=='') {

@@ -10,3 +10,14 @@ function mc_platform(): string {
     }
     return 'unsupported';
 }
+
+/** Only the officially supported Ubuntu x86-64 hosts offer native BDS. */
+function mc_linux_bedrock_supported(): bool {
+    if (mc_platform()!=='linux'||PHP_OS_FAMILY!=='Linux'||
+        !in_array(strtolower(php_uname('m')),['x86_64','amd64'],true))return false;
+    $info=@file_get_contents('/etc/os-release');
+    if (!is_string($info)||
+        !preg_match('/^ID="?ubuntu"?$/m',$info)||
+        !preg_match('/^VERSION_ID="?(\\d+\\.\\d+)"?$/m',$info,$match))return false;
+    return version_compare($match[1],'22.04','>=');
+}

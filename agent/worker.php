@@ -6,6 +6,7 @@ require dirname(__DIR__).'/src/App.php';
 require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
 require __DIR__.'/WindowsBedrock.php';
+require __DIR__.'/LinuxBedrock.php';
 require __DIR__.'/WindowsJava.php';
 require dirname(__DIR__).'/src/Uploads.php';
 require dirname(__DIR__).'/src/Plugins.php';
@@ -572,12 +573,16 @@ function worker_install(string $id,array $post,array &$native): array {
             if ($code!==0) throw new RuntimeException('Could not pull supported Minecraft image: '.substr($out,0,600));
             worker_progress(80,'Starting Minecraft container');
             worker_docker_run($id,$path,$meta,$meta['image']);
-        } elseif ($opts['edition']==='bedrock' && PHP_OS_FAMILY==='Windows') {
-            $installed=windows_bedrock_install($path,$opts+[
+        } elseif ($opts['edition']==='bedrock' &&
+            in_array(PHP_OS_FAMILY,['Windows','Linux'],true) && $opts['deployment']==='native') {
+            $downloadOptions=$opts+[
                 'bedrock_upload_id'=>$post['bedrock_upload_id']??'',
                 'bedrock_upload_sha'=>$post['bedrock_upload_sha']??'',
                 'bedrock_upload_name'=>$post['bedrock_upload_name']??''
-            ]);
+            ];
+            $installed=PHP_OS_FAMILY==='Windows'
+                ?windows_bedrock_install($path,$downloadOptions)
+                :linux_bedrock_install($path,$downloadOptions);
             $meta['version']=$installed['version'];
             $meta['sha256']=$installed['sha256'];
             $meta['jar']='';
@@ -701,7 +706,8 @@ function worker_native_spawn(string $id,string $path,array $meta,array &$native)
     if (worker_process_running($id,$native)) throw new RuntimeException('Native server is already running.');
     $port=(int)($meta['port']??0);
     $nethernet=false;
-    if (PHP_OS_FAMILY==='Windows'&&($meta['edition']??'java')==='bedrock'&&
+    if (in_array(PHP_OS_FAMILY,['Windows','Linux'],true)&&
+        ($meta['edition']??'java')==='bedrock'&&
         $port>=1024&&$port<=65535) {
         $socket=@stream_socket_client('tcp://127.0.0.1:'.$port,$err,$msg,0.4);
         if ($socket){$nethernet=true;fclose($socket);}
@@ -740,7 +746,9 @@ function worker_native_spawn(string $id,string $path,array $meta,array &$native)
     $log=$logDir.'/mcmanager-console.log';
     $env=null;
     if ($edition==='bedrock' && PHP_OS_FAMILY==='Linux') {
-        $env=$_ENV+['LD_LIBRARY_PATH'=>$path];
+        $env=getenv();
+        if (!is_array($env))$env=[];
+        $env['LD_LIBRARY_PATH']=$path;
     }
     $spec=[0=>['pipe','r'],1=>['file',$log,'a'],2=>['file',$log,'a']];
     $proc=proc_open($cmd,$spec,$pipes,$path,$env,['bypass_shell'=>true]);

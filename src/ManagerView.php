@@ -548,7 +548,7 @@ ls -l /var/run/docker.sock</pre>
     <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install">
     <div class="form-row">
       <label>Server name <input name="name" placeholder="Family server" maxlength="64" required></label>
-      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||$dockerAvailable): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
+      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||$dockerAvailable||($platform==='linux'&&mc_linux_bedrock_supported())): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
       <div class="manager-software-field" data-software-help>
@@ -556,8 +556,8 @@ ls -l /var/run/docker.sock</pre>
         <div class="manager-software-picker">
           <select id="mc-install-software" name="software">
             <option value="paper">Paper (Java)</option><option value="vanilla">Vanilla (Java)</option>
-            <?php if ($platform==='windows'): ?>
-            <option value="bedrock">Bedrock Dedicated Server (native)</option>
+            <?php if ($platform==='windows'||($platform==='linux'&&mc_linux_bedrock_supported())): ?>
+            <option value="bedrock">Bedrock Dedicated Server (native<?= $platform==='linux'?', Ubuntu':'' ?>)</option>
             <?php elseif ($dockerAvailable): ?>
             <option value="spigot">Spigot (container)</option><option value="bukkit">CraftBukkit (container)</option>
             <option value="fabric">Fabric (container)</option><option value="forge">Forge (container)</option>
@@ -613,11 +613,11 @@ ls -l /var/run/docker.sock</pre>
       <input type="hidden" name="netty_workdir" value="0">
       <label class="check"><input type="checkbox" name="netty_workdir" value="1" checked> Use server-local Netty native-library directory (recommended for restricted temporary directories)</label>
     </details>
-    <?php if ($platform==='windows'): ?>
+    <?php if ($platform==='windows'||($platform==='linux'&&mc_linux_bedrock_supported())): ?>
       <details class="manager-install-launch" data-windows-bedrock-upload hidden>
         <summary>Download blocked? Upload the official Bedrock server ZIP instead</summary>
-        <p class="hint">Download the Windows ZIP from <a href="https://www.minecraft.net/en-us/download/server/bedrock" target="_blank" rel="noopener noreferrer">Mojang's official Bedrock server page</a> and upload it here. mcmanager still creates and manages its own new server folder. The ZIP must match Mojang's latest published server filename; uploaded executables cannot be independently publisher-verified by SHA-256.</p>
-        <label>Windows Bedrock server ZIP (optional)
+        <p class="hint">Download the <?= $platform==='linux'?'Ubuntu/Linux':'Windows' ?> ZIP from <a href="https://www.minecraft.net/en-us/download/server/bedrock" target="_blank" rel="noopener noreferrer">Mojang's official Bedrock server page</a> and upload it here. mcmanager still creates and manages its own new server folder. The ZIP must match Mojang's latest published stable server filename; uploaded executables cannot be independently publisher-verified by SHA-256.</p>
+        <label><?= $platform==='linux'?'Ubuntu/Linux':'Windows' ?> Bedrock server ZIP (optional)
           <input name="bedrock_archive" type="file" accept=".zip">
         </label>
       </details>
@@ -626,7 +626,7 @@ ls -l /var/run/docker.sock</pre>
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
-  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally; native Bedrock installation is being certified separately.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
+  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally<?php if (mc_linux_bedrock_supported()): ?> and the official Ubuntu Bedrock Dedicated Server without Docker<?php else: ?>. Native Bedrock requires an officially supported Ubuntu 22.04+ x86-64 host<?php endif; ?>.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
 </section>
 
 </details>
