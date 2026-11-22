@@ -1,182 +1,80 @@
 # mcmanager
 
-**mcmanager** is a lightweight Minecraft Java and Bedrock server manager for local Windows, standard Linux and Synology DSM installations. It retains the original **mcconfig** icon and existing Synology package identifier so installed mcconfig packages can be upgraded in place.
+**mcmanager** is a web-based manager for Minecraft Java Edition and Bedrock Dedicated Servers running on the **same Windows PC, Linux machine or Synology NAS** as mcmanager. It provides a single interface to install, configure, monitor and control supported local Minecraft servers.
 
-The generic PHP application is the **primary distribution**. The optional DSM 7.2+ SPK bundles the same application together with a PHP CLI management worker. No database or third-party PHP framework is needed. Both distributions include the MIT License; the DSM installer displays the same MIT terms.
+The GitHub repository is named **mcconfig** for compatibility with the original Synology package. The application is written in PHP and does not require a database.
 
-## What it does
+## Features
 
-- **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
-- **Local platform isolation:** Windows and standard Linux use native local server installation without Docker. On Synology DSM, Bedrock uses the Container Manager wizard with temporary DSM administrator authorization; native Java remains supported. Only the detected local operating-system module is enabled, with no remote server management.
-- **Bedrock installation wizard (DSM, experimental):** Enter the server name, optional UDP port and memory limit, DSM administrator credentials and Minecraft EULA acceptance **once**; click **Install Bedrock server**. The wizard automatically checks or downloads the official Bedrock Docker image, monitors the download, creates an isolated persistent /data container, verifies it, and starts it when requested. A compact progress display and in-place Retry show the specific failed step and recovery instructions. Credentials remain only in the browser form during installation and are discarded afterwards; each backend API request logs in and out without saving credentials or granting permanent Docker access. Container Manager's create/image APIs still require real NAS validation.
-- **Separate DSM hardware and Container Manager diagnostics (0.5.26):** Check hardware and Java now runs as the restricted worker without probing the Docker socket or requiring DSM credentials. Unavailable storage and non-executable Java paths are reported individually instead of aborting the entire diagnostic. Under Diagnostics and server discovery, a separate read-only Check DSM Container Manager action requests one-time DSM administrator credentials over HTTPS; it reuses the existing Synology API login, lists containers and immediately logs out without saving passwords, tokens or granting the worker any permanent privilege.
-- **Native Ubuntu Bedrock and Linux VM certification (0.5.25):** On Ubuntu 22.04+ x86-64, mcmanager installs the official native Bedrock Dedicated Server without Docker, alongside Java Vanilla/Paper. The Linux downloader resolves the stable Mojang release via HTTPS, validates archive members and the ELF64 x86-64 executable, and supports the official ZIP upload fallback. A persistent Ubuntu Server 24.04.5 Hyper-V VM on DEV installed Java Temurin 25, Java Vanilla 26.3 and native Bedrock 1.26.66.1 through authenticated web operations; startup, graceful shutdown, saved worlds after reboot, diagnostics, independent backups and signed local discovery were verified. Sixteen Linux regression tests passed. The VM is intentionally retained until the user explicitly approves removal.
-- **Custom Windows/Linux Minecraft storage and local discovery (0.5.24):** New native Java servers, and Windows Bedrock servers, can be installed in a dedicated existing local directory on any writable local disk instead of the default managed storage. Each instance receives a unique ID-named subfolder. The worker validates the exact signed location, local filesystem access and available disk space before downloading. Uninstallation verifies mcmanager ownership and deletes only the exact selected managed server folder. The optional third-party scanner can now search a specific local directory (or its limited subfolders); scans do not import, start or alter existing servers. It identifies Java and Bedrock, indicates already-registered installations and keeps imported files where they are. Windows Service custom-folder permissions can be granted to LocalService once using the separate elevated helper script; network locations and system/private folders are rejected.
-- **Windows Service and reboot recovery (0.5.23):** A real .NET Framework Windows Service starts and monitors the local PHP CLI worker under the restricted LocalService account. Each managed Java/Bedrock native server has a separate signed PHP supervisor so the Minecraft game survives worker crashes without duplicate launches. Service stop sends Minecraft its graceful stop/save command and never force-kills worlds. A Windows-only per-server autostart checkbox is off by default; turning it on and explicitly starting the server arms recovery after Windows Service restarts/host reboot, while an intentional Stop disarms it. The installer stages only deployable application code under ProgramData, stores no admin password and does not copy private keys, tests or configs. An elevated upgrade script preserves managed worlds and private configuration.
-- **Platform-specific UI and backend isolation (0.5.22):** DSM authorization and container cleanup now require explicit Synology platform detection, not just Linux. Windows and standard Linux reject Docker/container import requests even if a Docker daemon happens to be installed. The About page, console and backup permission guidance now match the local platform. Third-party server import/discovery is collapsed into optional advanced controls, distinct from the default managed-server installer. Windows Bedrock discovery recognizes bedrock_server.exe and never infers Docker ownership from a directory name. The native Bedrock Update button is hidden until a safe updater is implemented; on-demand DSM containers are no longer offered an unsupported command console.
-- **OS-specific hardware and Java diagnostics (0.5.21):** Windows queries local installed/available RAM, OS and CPU details through native PowerShell/CIM instead of Linux /proc/meminfo; Linux and DSM use /proc with an available-memory fallback. Windows and standard Linux diagnostic reports no longer probe or display Docker, its daemon/socket, or DSM-only permission advice. DSM Container Manager checks are separate and use one-time DSM authorization over HTTPS. Java results show exact versions and distinguish mcmanager-managed runtimes from existing system Java. Windows native supervision is described as worker-managed, not as an unsupported Linux setsid feature. Legacy diagnostic records are rendered using their recorded OS to suppress irrelevant DSM fields. Other local Windows/Linux interface hints are platform-specific.
-- **Windows Bedrock Mojang CDN fix and safe retry (0.5.20):** The Windows native Bedrock downloader now uses HTTPS browser-like user-agent/Accept/Referer headers for the official Mojang ZIP. On DEV, the default curl request stalled with zero bytes but a browser-style request downloaded the complete official Bedrock Dedicated Server 1.26.66.1 archive. The real binary installed, started and stopped successfully from both the CLI certifier and the authenticated local web installer. A failed Windows Bedrock registration can now retry *in place* if its managed installation folder is empty; any files/world data cause a safe refusal instead of cleanup. ZIP upload remains a fallback if downloads are blocked. Current 1.26+ NetherNet uses TCP signaling; the old RakNet UDP ping does not provide player counts for this version, although process and native listener status work.
-- **Three exclusive local OS modules (0.5.19):** Detect Windows, standard Linux and Synology DSM; only the local module's deployment options are enabled. Windows installs Java Vanilla/Paper and native Bedrock without Docker or BIOS virtualization; supported Ubuntu Linux installs native Java and Bedrock; DSM retains its own Container Manager wizard. No remote host management is implemented.
-- **Windows local Java installation and monitoring (0.5.19):** Verified on game-amd with an isolated Windows PHP web interface and CLI worker: official Mojang Vanilla 26.3 and stable Paper 26.3 servers were installed, started, pinged and stopped; the web installer and Start/Stop job queue also passed live tests. A publisher-checksummed Temurin 25 Windows ZIP was installed side by side through both CLI and web operations without changing system Java.
-- **Windows native Bedrock installer (0.5.19, live certified in 0.5.20):** Resolves the official Mojang Bedrock Windows ZIP link, checks extraction paths, symlinks, collision rules and the executable's x64 PE architecture, configures the server, and uses the regular native process worker. The initial Mojang CDN request stalled because it lacked compatible browser headers; the v0.5.20 downloader resolves this and the ZIP was retrieved and tested on DEV. An optional official ZIP upload remains available in the same managed installer. Uploaded ZIPs are checked against Mojang's current published filename, upload SHA-256, safe contents and x64 executable format, but without an independently supplied publisher hash their publisher identity cannot be cryptographically established. Real Bedrock startup and graceful shutdown passed on DEV; player-count probing requires an updated NetherNet-aware implementation because the old UDP RakNet probe is obsolete.
-- **Contextual server-software help (0.5.19):** A compact question-mark control beside the software selection explains Vanilla, Paper, Bedrock and the currently offered mod/plugin software and links directly to publishers without cluttering the form.
-- **DSM state-aware lifecycle controls (0.5.18):** Bedrock cards show Stop and Check status when DSM confirms Running, Start and Check status when DSM confirms Stopped, and only Check status when the reading is stale or unknown. The Start button is never presented as a green primary action on an already-running container. AJAX updates the controls immediately after each DSM observation, and the periodic dashboard refresh retains the same logic.
-- **DSM server-card controls (0.5.17):** DSM-managed Bedrock server cards now show **Start**, **Stop**, and **Check status**. Each opens a short inline DSM administrator authorization form, makes one scoped HTTPS request and logs out, then immediately discards the password, OTP and token. The verified server image and `/data` bind mount are checked before lifecycle operations. The status badge shows **Running** or **Stopped** only for a recent DSM-confirmed observation; after 90 seconds it says **Last seen running/stopped** until checked again. No persistent privileged access is granted or stored.
-- **DSM dual-path bind mount verification (0.5.16):** Verifies actual Docker /data runtime mounts first, before HostConfig and saved Synology profile aliases. The real /volume1/@appdata bind mount now takes precedence over the unreadable Synology /@appdata display alias, while genuinely incorrect runtime mounts and anonymous volumes remain blocked. Recovery clearly offers Verify existing Bedrock container and only offers destructive repair for anonymous @docker volumes. The verification operation never creates, deletes or starts containers. Tests cover the dual-path case and contradictory mounts.
-- **Synology absolute-path mount fix and guarded repair (0.5.16):** Container Manager creates native absolute-path volume bindings with `host_absolute_path`, not `host_volume_file` (which is for DSM shared-folder paths). New Bedrock profiles now use the correct key. Existing registered Bedrock containers incorrectly assigned an anonymous Docker `/data` volume can be repaired from the Bedrock wizard with separate administrator confirmation, only if DSM proves the original was never started, its image/name and anonymous volume match, and the local managed folder is unchanged. The action replaces that stopped container configuration, does not explicitly delete Docker volumes or managed world files, and requires successful new mount verification before starting. Potential content of the anonymous Docker volume is not transferred, so repair refuses anything that may have been started.
-- **Mount-path mismatch diagnosis (0.5.16):** When Synology confirms the container name and image but rejects the /data volume, mcmanager displays the exact registered and DSM-reported host paths to the authenticated HTTPS administrator, including whether PHP can resolve each alias. Verification also compares filesystem device/inode identity where accessible. No environment variables or DSM credentials are displayed. It still refuses mismatched or unverified mounts; editing or removing the container is never automatic.
-- **DSM authorization rate limit (0.5.16):** Only explicit rejected DSM administrator logins count toward four attempts in 15 minutes. Image operations, API failures, storage checks and verification errors do not count; successful DSM authentication clears earlier failures. Existing incorrect lockout counters from previous versions are discarded on upgrade.
-- **Bedrock verification recovery (0.5.16):** Verification accepts checked Synology Container Manager profile and Docker inspect bind-mount layouts, but refuses missing or conflicting image, container name or /data paths. Failures report which evidence was absent or conflicting, without exposing credentials or private paths. A failed or interrupted Bedrock wizard can be resumed from the registered server card without downloading the image or creating a duplicate container. Retry explicitly points to a missing DSM password or invalid form input.
-- **Bedrock cleanup and recovery:** manager-created DSM containers have a working one-click link that opens the appropriate temporary DSM authorization controls, including image/mount verification, start/stop and a confirmed **Remove container** operation. Remove container validates the exact managed image, name and /data mount, stops and deletes only the registered Minecraft container, and removes its registry entry. Worlds are preserved unless their deletion is separately opted into and confirmed by typing DELETE FILES; deletion is restricted to the exact managed server folder, never other volumes/servers. If the Docker container/image was already removed in Container Manager, **Forget server entry** removes the obsolete mcmanager entry without touching existing files, images or containers and without requiring DSM credentials. Docker images can be shared and are never removed automatically. The Synology SPK explicitly opens the application using HTTPS port 443.
-- **Temporary DSM authorization:** Container management uses a fixed loopback DSM Container Manager API, HTTPS on the browser, and a new DSM login/logout for each operation. No password, SID or CSRF token is written to application storage or worker jobs. Start, Stop and Check status are available on the server card, while advanced diagnostic options remain separately available. Other container implementations remain experimental.
-- **Docker GUI-assisted authorization:** DSM Control Panel → Task Scheduler → User-defined script can execute an administrator-reviewed one-time root task to create a dedicated socket-access group and grant the package worker access, without any root password being entered in mcmanager. The sample validates the service account and socket and refuses to reset membership of an existing group. The setup still grants root-equivalent Docker control whenever the socket is accessible; truly per-action temporary privilege would require a separately audited narrow privileged broker. No automated escalation or root credentials are stored.
-- **Docker administrator permission guide:** when Container Manager is installed but the restricted DSM package worker cannot reach Docker, Server Manager identifies the required read/write permission on `/var/run/docker.sock`, reports the live worker account, socket group, permission mode and group membership, and provides an expandable SSH verification guide. It distinguishes missing Docker CLI, root-owned socket groups, missing group membership, insufficient group permissions and daemon/ACL problems. Socket access is effectively root-level NAS control; no permissions are changed automatically, and unsafe world-writable sockets or joining the root group are not recommended.
-- **Native Java launch settings:** per-server initial and maximum JVM heap (Xms/Xmx), validated optional JVM flags (including the explicitly approved Java 25 `--enable-native-access=ALL-UNNAMED` to suppress JNA warnings), and a private server-local Netty JNI work directory to avoid Synology systems whose `/tmp` disallows executable libraries. Native access is opt-in and does not suppress unrelated `sun.misc.Unsafe` deprecation warnings. Settings apply on the next start; no running server is interrupted. Newly installed native Java servers can set these at creation. Container memory remains a Docker/container limit.
-- **Server lifecycle:** start, stop, restart, status, guarded uninstall and independent Linux native-server supervision. Native servers can survive a PHP management-worker restart and can recover their saved desired running state after reboot. Imported Java processes can use localhost-only RCON when configured. Imported containers retain external ownership.
-- **Server logs:** the Logs page offers an authenticated, confirmation-protected **Clear logs** action for stopped Minecraft servers. It moves recognised `.log` and `.log.gz` files to private recovery storage; no world, properties or plugin files are changed. Minecraft 26.3 may log an idle pause after 60 seconds without players; that is not a process failure. Set `pause-when-empty-seconds=0` in server.properties if the simulation must continue. DSM may omit `/etc/os-release` and `/etc/lsb-release`; the messages alone are not fatal.
-- **Simplified server dashboard:** registered servers appear first with green **Running**, red **Stopped** and yellow **Needs attention** indicators. Start/Stop/Restart, Console and Properties are visible immediately. Advanced maintenance, backup/restore, Java installation, diagnostics, new-server creation and job history stay in expandable sections. Signed state data is refreshed without overwriting expanded forms.
-- **Monitoring and console:** host architecture, RAM, disk, Java versions, Docker and server health, CPU/memory metrics and player counts. Detailed Container Manager/Docker CLI/socket ownership diagnostics help distinguish a running DSM package from actual Docker daemon authorization. Server Manager polls selected job results, queued jobs and historical job entries every 3 seconds (including after completion), shows last synchronization/errors, and labels history separately from current server state. Per-server console supports supervised native stdin, Java container RCON, Bedrock container send-command and localhost-only RCON for externally started Java.
-- **JAR management:** dedicated native-Java destination selector; official Mojang/Paper stable JAR catalog, publisher-checksummed direct HTTPS URLs, and JAR upload; detects Minecraft version from embedded metadata/startup logs and shows typical Java runtime requirement. Replacing the JAR backs up the previous file. Registered existing empty server folders can be initialized with a JAR without implying a full installation until first successful start. Generic web hosting without a worker retains manual uploaded-JAR installation with an explicit stopped-server confirmation, but official downloads require the worker; DSM packages use supervised worker operations.
-- **Updates:** official Mojang and stable PaperMC version lookup; SHA-verified JAR downloads for native Vanilla/Paper, with backup. Container image refresh and recreation are administrator-initiated and restricted to manager-created containers.
-- **Java management:** detect installed Java and install side-by-side Eclipse Temurin JRE **17, 21 or 25** via official latest-release dropdown, official HTTPS archive URL, or manual .tar.gz upload. Every method verifies the upstream SHA-256 and Linux ELF x64/ARM64 architecture. DSM system Java is left untouched.
-- **Plugin packages and tracked uninstallation:** JAR files and ZIP bundles containing plugin JARs can be installed on compatible Paper/Bukkit servers. ZIP files are extracted into that server's `plugins/` folder with strict path, symlink, ZIP entry, size and collision checks; each installed file and SHA-256 is recorded in a private, HMAC-signed manifest scoped to the server. Uninstall moves unchanged files to recovery, preserves subsequently modified configuration unless explicitly authorised, and removes only empty installer-created directories. Plugin files created later by the game are not automatically deleted. Existing unmanaged JARs remain removable separately. Stop Minecraft before installation or removal.
-- **Plugins and Vanilla upgrade:** the Plugins tab lists registered Java servers, identifies those with a Bukkit/Paper-compatible plugin loader and explains that Vanilla loads datapacks rather than Bukkit plugin JARs. Eligible stopped, mcmanager-created native Vanilla servers can explicitly switch to a matching stable Paper release with a full backup and confirmation; imported servers are not automatically converted. On Paper-compatible servers, drop or upload plugin JARs, or install direct Modrinth CDN URLs with SHA-256. Remove plugins while preserving a private recovery copy. Stop the server before changing plugins, then restart to load them. Fabric/Forge mods and Bedrock add-ons require other installation methods.
-- **Version-aware configuration files:** the additional configuration editor shows only files actually created by the selected server implementation. Vanilla does not advertise Bukkit/Paper files; Bukkit/Spigot settings are limited to compatible implementations; modern and legacy Paper layouts are distinguished by the real on-disk files. Bedrock exposes only supported JSON configurations. Configuration files are backed up before edits and never generated just because a different Minecraft version supports them.
-- **Plugins UI:** identifies Vanilla as the server implementation rather than misleadingly claiming a separate plugin loader can be installed. Paper and compatible servers load Bukkit/Paper plugin JARs; eligible native Vanilla servers have an explicit, backed-up switch-to-Paper operation.
-- **Server properties and existing mcconfig features:** a compact two-column, horizontally labelled server.properties editor with tighter rows and live search count, preserving original keys, comments and backups. When missing, diagnose incomplete or imported servers and link to JAR installation; for an installed native Java JAR, create basic properties explicitly if needed. Minecraft may expand its settings when first started. Also manage Java ops/whitelist/bans (UUID JSON), Bedrock allowlists/XUID permissions, Bukkit/Spigot/Paper YAML, worlds and logs.
-- **Recovery and safety:** administrator login and CSRF; HMAC-authenticated queue; no arbitrary shell controls; file backups and verified downloads. Queue cancellation is safe only before execution. Interrupted jobs are marked failed without destructive automatic replay; interrupted restore swaps recover the original server directory.
-- **Backup and restoration:** independent SHA-256-verified ZIP snapshots, full world and configuration restoration through a staged folder swap, a pre-restore safety backup, retention controls (3–30) and preservation of executable file permissions. Restore requires the server to be stopped.
+- **Multiple servers:** Manage independent Minecraft installations and check their status from one dashboard.
+- **Server installation:** Install supported Java or Bedrock server software in separate, managed folders.
+- **Start, stop and restart:** Control servers, inspect logs and send supported Minecraft console commands.
+- **Java runtimes:** Detect installed Java or install compatible Eclipse Temurin Java 17, 21 and 25 runtimes.
+- **Configuration:** Edit server properties, ports, memory limits and supported JVM options.
+- **Worlds and backups:** Manage server files and worlds; create, verify and restore ZIP backups.
+- **Java plugins:** Browse and manage plugin files for compatible Java servers.
+- **Custom storage:** Install servers under a chosen local folder or drive on Windows and Linux.
+- **Existing installations:** Scan local directories for Java/Bedrock servers and optionally register them without moving their files.
+- **Diagnostics:** Inspect CPU, RAM, storage and Java; use separate one-time authorization for DSM Container Manager checks.
+- **Recovery:** Supervise native servers and recover supported running states after service or host restarts.
 
-Minecraft itself is not bundled.
+mcmanager manages **servers on its own host only**. Windows, Linux and DSM each have their own platform-specific module; it does not control servers on other computers.
+
+## Supported platforms
+
+| Host operating system | Java Edition | Bedrock Edition | Deployment |
+| --- | --- | --- | --- |
+| **Windows (64-bit)** | Native Vanilla and Paper | Native Bedrock Dedicated Server | Local processes; Docker not needed |
+| **Linux** | Native Vanilla and Paper | Native Bedrock on **Ubuntu 22.04+ x86-64** | Local processes; Docker not needed |
+| **Synology DSM 7.2+** | Native Vanilla and Paper | Bedrock through **Container Manager** | DSM package and local worker |
+
+Java servers need a compatible Java runtime; **Bedrock does not require Java**. Additional Java distributions such as Spigot, Fabric, Forge, NeoForge, Purpur and Folia can be registered or managed where supported, but are **not all automatically installed**.
+
+**Windows** includes an optional Windows Service for worker startup, recovery and opt-in server restart following a reboot. **Linux** uses a local PHP worker that can be supervised by systemd. **DSM** uses Web Station and offers one-time administrator authorization for Container Manager operations; credentials and DSM sessions are not saved.
 
 ## Requirements
 
-**Web interface:** PHP 8.2 or newer with session, zip and zlib, writable private application storage, and read/write access to Minecraft directories. Large uploads depend on Web Station's PHP profile and HTTP server limits; the DSM package requests 512M upload / 520M POST settings, but existing profiles and front-end limits must be checked.
+- **PHP 8.2+** with required extensions including ZIP/zlib; PHP CLI and `proc_open` for server installation and control.
+- Apache, IIS or Synology Web Station, serving the application's `public/` directory.
+- A persistent **local PHP worker** for installation, process supervision and monitoring.
+- Private, writable application storage and Minecraft folders accessible to the relevant local accounts.
+- On Synology: Web Station and PHP 8.2+; Container Manager is required for Bedrock containers.
+- Internet access to download Minecraft server binaries and managed Java runtimes.
 
-**Optional local worker:** PHP 8.2+ CLI with zip, zlib and proc_open; Linux native persistence additionally requires util-linux setsid -f. OS support for Java/native processes and Docker CLI/daemon access are needed for container control. Docker is not required to manage native servers. A Docker-enabled worker can effectively administer host containers; grant access deliberately and only on a trusted NAS. Shared web hosting without a persistent CLI process still supports the file-management features.
+The website can be used for some file-management functions without a worker, but full server control requires the local worker.
 
-**Hardware:** actual Java, CPU architecture, available RAM and disk space are checked before managed installations. Native Linux Bedrock requires Ubuntu 22.04+ on x86-64 and does not require Docker. A managed Java installation uses the host's existing Java or a compatible managed Temurin runtime; containers provide their own Java.
+## Installation
 
-## Windows local installation — initial support
+### Windows and Linux
 
-Windows requires PHP 8.2+ with CLI, zip, curl and OpenSSL. Extract the generic web ZIP, configure a local Apache/IIS HTTPS site with **public/** as the document root, and use private writable storage outside the web root. The worker and web PHP process must share the same **MCCONFIG_DATA_DIR** and **MCMANAGER_INSTANCES_DIR** environment variables, for example:
+1. Build the generic web package with `python packaging/build.py --format web`, or obtain an existing package.
+2. Extract `mcmanager-web-<version>.zip` and configure the web server document root as `public/`. Never expose `src/`, `agent/` or private data through the web server.
+3. Set up private application storage. The web process and worker must share the same `MCCONFIG_DATA_DIR` and `MCMANAGER_INSTANCES_DIR` values, with appropriate permissions.
+4. Open the web interface and create the administrator password.
+5. Run the worker under a service manager: `php agent/worker.php serve` on Linux, or use `packaging/windows/install-service.ps1` for the Windows Service.
+6. In **Server Manager**, install a new server or scan for a local existing installation.
 
-    set MCCONFIG_DATA_DIR=C:\\mcmanager-data
-    set MCMANAGER_INSTANCES_DIR=C:\\mcmanager-instances
-    php agent/worker.php doctor
-    php agent/worker.php serve
+On Windows, the service installer manages the worker, not Apache/IIS. For a custom installation drive, grant the restricted worker access to a dedicated folder before installing servers.
 
-For production, install the dedicated Windows Service from the generic web ZIP. It supervises the worker independently of logins, restarts the worker after a crash and gracefully stops Minecraft when Windows stops the service. Managed installations create private server directories automatically; remote hosts, Docker and manual folder selection are not required. The PHP built-in web server is strictly for local development and **does not** start automatically after reboot; configure Apache or IIS as a separate automatically starting web service.
+### Synology DSM
 
-**Windows Service setup (run in elevated PowerShell on the local Windows host, from the application directory):**
+1. Install **Web Station** and **PHP 8.2+** in Package Center; install **Container Manager** for Bedrock.
+2. Build the DSM package with `python packaging/build.py --format all`, or obtain a packaged SPK.
+3. Install `mcmanager-DSM7-<version>.spk` using **Package Center → Manual Install**.
+4. Open the app over HTTPS, set its administrator password and use Server Manager.
 
-    .\packaging\windows\install-service.ps1 -Mode Check -PhpExe "C:\php\php.exe"
-    .\packaging\windows\install-service.ps1 -Mode Install -PhpExe "C:\php\php.exe" -DataDir "C:\ProgramData\mcmanager\data" -InstancesDir "C:\ProgramData\mcmanager\instances"
+The package retains the internal name `mcconfig` and application address `/mcconfig/` for existing DSM installations.
 
-The script stages deployable code into ProgramData, grants NT AUTHORITY\LocalService the required private-folder permissions and registers the service with delayed automatic startup and Windows recovery. If you want Minecraft on a different local drive, first create a dedicated folder (for example D:\MinecraftServers) and authorize only that folder using an elevated PowerShell command:
+## Limitations
 
-    .\packaging\windows\grant-storage.ps1 -Path "D:\MinecraftServers" -ServiceName mcmanager-worker
+- No remote management of Minecraft servers on other devices.
+- Automatic native installation currently covers Java **Vanilla/Paper** and Bedrock on supported **Windows/Ubuntu** hosts; DSM Bedrock requires Container Manager.
+- Imported servers retain their original files; available controls depend on their existing installation and startup method.
+- Native Bedrock software updates are not yet automated. Current Bedrock NetherNet versions do not expose reliable player counts via the older UDP query.
+- Minecraft client connectivity, firewall rules and third-party plugin compatibility require separate configuration and verification.
 
-Then use the custom installation location field under Server Manager > Create a Minecraft server. The local web/PHP account must also be able to access the world's files. Do not grant access to an entire drive, your Windows directory or unrelated folders. Supply the PHP CLI location actually installed on the computer. Apache/IIS PHP must use the same MCCONFIG_DATA_DIR and MCMANAGER_INSTANCES_DIR values and compatible permissions as the worker; set its web root to public/ and configure its own HTTPS service independently. Do not use the PHP development server for unattended hosting. Service account permissions to Apache/IIS are separate from worker service permissions.
+## License
 
-In Server Manager, expand a Windows server's details and enable **Restart this server automatically after Windows or the mcmanager service restarts**, then select Start once to arm recovery. The setting defaults to off. Clicking Stop intentionally disarms recovery until the next manual Start. A normal service shutdown saves worlds without force-killing game processes.
+[MIT](LICENSE)
 
-**Upgrade the Windows Service (run elevated, preserving Minecraft instances/worlds and private data):**
-
-    .\packaging\windows\upgrade-service.ps1 -ServiceName mcmanager-worker
-
-To remove only the worker service while retaining data:
-
-    .\packaging\windows\install-service.ps1 -Mode Remove -PhpExe "C:\php\php.exe"
-
-The Windows service was live-tested on DEV under LocalService for worker-crash recovery without duplicate Minecraft processes, graceful save and stop, restart of an opted-in Minecraft server, intentional Stop remaining stopped, and in-place service upgrade. A full Windows machine reboot has **not** been performed. The service does not install or configure Apache/IIS for you.
-
-Managed native Java Vanilla and Paper use the official Minecraft server downloads and compatible Java runtimes, installing or upgrading official SHA-256-verified Temurin ZIPs side by side where necessary. Bedrock runs **bedrock_server.exe** and requires no Java or virtualization. The Mojang CDN transfer was fixed using browser-style headers in v0.5.20 and live Bedrock install/start/stop now pass on DEV. If downloading remains blocked on a different host, the upload fallback remains available. The legacy RakNet player-count query is not compatible with current NetherNet servers.
-
-## Custom local storage and existing-server discovery
-
-On Windows and standard Linux, select Server Manager > Create a Minecraft server > Installation location and enter an existing writable absolute **local** parent directory, for example D:\MinecraftServers (Windows) or /srv/minecraft (Linux). Leave it blank for the normal managed storage. The worker creates a distinct server ID subfolder within the selected location; a pre-existing server folder is never overwritten. Windows Service LocalService (or the Linux worker account) must have permission to create files there; web PHP needs compatible access to edit worlds and configuration. On Linux, assign appropriate ownership/group permissions for the worker without running the web application as root. Network shares, UNC paths, symlinks, protected OS directories and filesystem roots are not supported as custom parents.
-
-To find an existing server already installed by another tool, use Server Manager > Diagnostics and server discovery > Third-party local server discovery. Leave the scan folder empty for managed/default storage, or enter an absolute local folder to scan that directory and a few nested levels. Scanning is read-only and bounded. Select Register (keep files in place) for an existing installation you intentionally want to manage. Registration adds local metadata but never copies/moves or deletes the server's files. Existing imported worlds remain owned by their original installer; removing the registration leaves them intact.
-
-## Generic web hosting installation
-
-1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.26.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
-3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
-4. Open the site and create the administrator password. Use **Settings > Register an existing Minecraft server** only to attach an existing folder; it does not install Minecraft or create properties. Use **Server Manager > Install a new Minecraft server** to provision a new instance, then install the required Java runtime. The JAR management tab can install a verified native Java server JAR into a registered directory.
-
-Optional management worker on a Linux machine with PHP CLI:
-
-    MCCONFIG_DATA_DIR=/path/to/private/data \
-    MCMANAGER_INSTANCES_DIR=/path/to/minecraft/instances \
-    php agent/worker.php doctor
-
-    MCCONFIG_DATA_DIR=/path/to/private/data \
-    MCMANAGER_INSTANCES_DIR=/path/to/minecraft/instances \
-    php agent/worker.php serve
-
-Both processes must use identical private data and instances paths, with appropriate owner/ACL access. Keep the worker supervised by your service manager; avoid exposing it over HTTP. The once mode processes queued jobs for manual troubleshooting. On Linux, native servers use their own long-running supervisor and continue running across worker restarts. After a host reboot, the restarted worker attempts recovery of native servers whose signed desired state was running; retries are rate-limited. A normal worker or Package Center stop does not forcibly terminate a separate Minecraft supervisor. Stop Minecraft servers explicitly from the UI before uninstalling mcmanager.
-
-## Ubuntu Linux deployment and persistent DEV VM
-
-Supported Ubuntu 22.04+ x86-64 servers offer native Bedrock Dedicated Server alongside Java, with no Docker. The worker validates the Mojang stable Linux ZIP, installs in an owned local folder and manages lifecycle and worlds. Bedrock does not need Java.
-
-On Windows DEV, a persistent Hyper-V Ubuntu Server 24.04.5 VM named mcmanager-linux-test is stored under C:\VMs\mcmanager-linux. It uses 4 virtual CPUs, 6 GiB memory, a dynamically allocated 55 GiB disk and Hyper-V Default Switch NAT. To find its changing local IP and display the web address, run:
-
-    powershell.exe -ExecutionPolicy Bypass -File C:\VMs\mcmanager-linux\Open-Linux-mcmanager.ps1
-
-Add -OpenBrowser to open the web interface. SSH keys and the random test administrator password are stored only in the local ssh subfolder; never publish them. The guest runs Apache/PHP 8.3 and a restricted www-data systemd worker, with private data at /var/lib/mcmanager/private and separate managed storage under /srv/mcmanager. Preserved test installations:
-
-- Java Vanilla 26.3 on TCP port 25576: /srv/mcmanager/instances/9d4d1229c435
-- Native Bedrock 1.26.66.1 on TCP port 19146: /srv/mcmanager/custom/e2777eb46b96
-
-Both installed through authenticated web jobs, started and stopped gracefully, retained worlds across a full guest reboot, and were started/stopped again after reboot. Java runtime management, bounded local discovery, diagnostics and independent backup creation passed, alongside Linux regression tests. The virtual network is only for local DEV testing; public Internet access and joining from a real Minecraft game client are untested.
-
-DO NOT DELETE, UNINSTALL, REVERT OR ERASE THE VM, ITS CHECKPOINTS, VIRTUAL DISK OR WORLDS UNTIL THE USER EXPLICITLY CONFIRMS THEY ARE NO LONGER NEEDED.
-
-## Synology DSM 7.2+
-
-Install **Web Station** and **PHP 8.2** through Package Center, then build:
-
-    python packaging/build.py --format all
-
-This generates:
-
-- dist/mcmanager-web-0.5.26.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.26.spk — DSM Package Center manual install
-
-The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip, zlib and curl. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
-
-By default the private application data lives in /var/packages/mcconfig/var; managed server files live below /var/packages/mcconfig/var/instances. For persistent Minecraft worlds on a volume, set MCMANAGER_INSTANCES_DIR for **both** PHP-FPM and the CLI worker before creating servers. DSM ACL permissions for the package service account are still needed. Container management requires access to DSM Container Manager's Docker service and is **not automatically granted**.
-
-DSM Package Center lifecycle, Web Station registration, Docker access, setsid availability and native-worker permissions should be verified on the actual NAS before relying on production installation or upgrades. Persistent native supervision requires setsid -f; without it native launch is disabled rather than silently falling back to a fragile in-process child. DSM uninstall refuses to proceed while independent managed native Minecraft supervisors are running; stop those Minecraft servers from the dashboard before uninstalling.
-
-## Example: existing Docker server
-
-For an itzg/minecraft-server container mounted using:
-
-    /volume1/docker/minecraft-java/data:/data
-
-add the **NAS host** path /volume1/docker/minecraft-java/data, not /data, in Settings. Choose Java, Container, the server implementation, and the **existing container name**. Then choose **Adopt** in Server Manager. The agent verifies both the image and /data mount before offering lifecycle controls.
-
-Bedrock containers use the equivalent host path and, where needed, a separate Bedrock worlds path. Docker environment variables may override changes to server.properties; with the itzg Java image, OVERRIDE_SERVER_PROPERTIES=false lets the properties file be managed independently when the chosen image supports this configuration.
-
-## Important limitations
-
-- **Imported servers are preserved.** The manager does not delete an imported container or its data. Existing native servers already running outside the worker cannot be sent process commands. Adopted servers can be edited and monitored; managed start/stop for native Java only works for processes started by the worker.
-- **Installation support is edition-specific.** Native Java supports Vanilla/Paper on Windows and Linux. Native Bedrock is available on Windows and supported Ubuntu x86-64, while DSM uses Container Manager. Other modded variants need supported deployment or existing-server import. Native Bedrock updates and NetherNet player-count queries remain outstanding. No real Minecraft client join was tested on the Ubuntu VM.
-- **Managed update is not automatic.** The administrator approves it. Native JAR installation failures attempt an immediate old-JAR/metadata rollback; container creation failures attempt the previous image. Backups are taken before changes, but world or plugin compatibility still requires administrator checks. Stop servers before consistent backups and software replacement.
-- **Container permissions are powerful.** Do not expose Docker socket access to the PHP web process or give unrestricted root credentials to an HTTP endpoint. Running the CLI worker with Docker access requires an intentional NAS permissions decision.
-- **Monitoring has scope limits.** CPU and RAM counters depend on host OS/permissions. The player count probe requires the local server protocol and port to respond. Container stdout/stderr is still viewed in DSM Container Manager.
-- **Console is not a system terminal.** It accepts one Minecraft command at a time, never OS commands. Java containers require the itzg image's local RCON helper; Bedrock containers require its send-command helper. For imported native Java, RCON must be configured and reachable via 127.0.0.1. Native Bedrock outside the worker does not expose an equivalent RCON interface. Console output is a bounded recent-log view, not a persistent SSH/TTY session.
-- **Minecraft versions:** The version is detected from JAR metadata or startup logs when possible; if unavailable, the registered version is displayed with a source label. The Java compatibility indication is a general Minecraft guide and does not replace checks for modded distributions. An empty registered directory has no installed Minecraft version.
-- **Plugin safety:** Plugin JARs execute arbitrary Java code inside Minecraft, not a sandbox. SHA-256 checks transfer integrity, not whether a plugin author is trustworthy. Plugins are not auto-updated, and dependencies/version compatibility are not automatically resolved. Install or remove plugins only while the server is stopped.
-- **Startup security:** User-configurable JVM arguments are validated against a small allowlist of GC, processor/thread-count and safe `-D` options; they cannot add arbitrary JVM agents, shell commands or executable overrides. Native Netty JNI extraction can be moved to an app-created directory under the server root, provided the storage filesystem permits executable native libraries.
-- **Java source restrictions:** Uploaded/downloaded JREs must match the current official Temurin release for the chosen major and NAS CPU. Unsupported/older archives are refused rather than installed without verified publisher metadata.
-- **Docker access:** Synology Container Manager is the Docker package, but the mcconfig package account does not automatically have permission to access its daemon. Hardware/Java diagnostics never open the Docker socket. Advanced Docker-access diagnostics can show its ownership and worker identity; the separate one-time DSM API check can list containers without socket permissions. Granting Docker socket access is effectively host administration and is not automatically changed by the installer.
-- **No remote server/SSH orchestration, scheduled auto-update, plugin marketplace or cross-host migrations** is currently implemented.
-- **Backups:** v0.5.0 uses integrity-checked ZIP snapshots. Previous .tar.gz backup archives remain on disk but are not imported into the new restore interface. Snapshots require extra free disk space. Symlinks are rejected; imported Linux server roots with different ownership cannot be restored by the unprivileged worker. Synology ACLs are not preserved as part of a ZIP snapshot, so validate permissions before restoring external or shared-volume Minecraft data.
-- **Uninstallation:** by default, managed server data is retained. Optional permanent deletion requires an exact name match and only applies to folders created/owned by mcmanager.
-
-Project repository: https://github.com/ardenee/mcconfig
+Project website: [arden.ie](https://www.arden.ie/) · [GitHub](https://github.com/ardenee/mcconfig)
