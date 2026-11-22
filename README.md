@@ -1,8 +1,8 @@
-# mcmanager
+# mcconfig Manager
 
-**mcmanager** is a web-based manager for Minecraft Java Edition and Bedrock Dedicated Servers running on the **same Windows PC, Linux machine or Synology NAS** as mcmanager. It provides a single interface to install, configure, monitor and control supported local Minecraft servers.
+**mcconfig Manager** is a web-based manager for Minecraft Java Edition and Bedrock Dedicated Servers running on the **same Windows PC, Linux machine or Synology NAS** as mcconfig Manager. It provides a single interface to install, configure, monitor and control supported local Minecraft servers.
 
-The project retains the original **mcconfig** Synology package identifier for upgrade compatibility. The GitHub repository is **[ardenee/mcconfig_Manager](https://github.com/ardenee/mcconfig_Manager)**. The application is written in PHP and does not require a database.
+The project retains the original **mcconfig Manager** Synology package identifier for upgrade compatibility. The GitHub repository is **[ardenee/mcconfig_Manager](https://github.com/ardenee/mcconfig_Manager)**. The application is written in PHP and does not require a database.
 
 ## Features
 
@@ -18,7 +18,7 @@ The project retains the original **mcconfig** Synology package identifier for up
 - **Diagnostics:** Inspect CPU, RAM, storage and Java; use separate one-time authorization for DSM Container Manager checks.
 - **Recovery:** Supervise native servers and recover supported running states after service or host restarts.
 
-mcmanager manages **servers on its own host only**. Windows, Linux and DSM each have their own platform-specific module; it does not control servers on other computers.
+mcconfig Manager manages **servers on its own host only**. Windows, Linux and DSM each have their own platform-specific module; it does not control servers on other computers.
 
 ## Supported platforms
 
