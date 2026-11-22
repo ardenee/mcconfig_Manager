@@ -11,6 +11,7 @@ require dirname(__DIR__) . '/src/DockerAccess.php';
 require dirname(__DIR__) . '/src/DsmOnDemand.php';
 require dirname(__DIR__) . '/src/DsmBedrock.php';
 require dirname(__DIR__) . '/src/DsmWizard.php';
+require dirname(__DIR__) . '/src/DsmCleanup.php';
 require dirname(__DIR__) . '/src/ServerJar.php';
 require dirname(__DIR__) . '/src/Startup.php';
 ini_set('session.use_strict_mode', '1');
@@ -107,6 +108,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 unset($_POST['dsm_password'],$_POST['dsm_otp']);
             }
         }
+        if ($action==='dsm_forget_server') {
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$serverId]??null;
+            if (!is_array($row)||!dsm_cleanup_eligible($row,$serverId)) {
+                throw new RuntimeException('Only mcmanager-created Bedrock entries can be forgotten.');
+            }
+            if (request_string($_POST,'confirm_name',64)!==($row['name']??'')) {
+                throw new RuntimeException('Enter the server name exactly to remove this registration.');
+            }
+            $forgot=dsm_cleanup_registration($config,$serverId,false);
+            $_SESSION['flash']=$forgot['message'];
+            if (($_SESSION['server_id']??'')===$serverId)unset($_SESSION['server_id']);
+            redirect('manager');
+        }
         if ($action === 'dsm_approve_once') {
             if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('This approval mode is available only on a Synology/Linux installation.');
             if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off') {
@@ -121,7 +136,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $operation=request_string($_POST,'dsm_operation',18);
             $row=null;
             $serverId='';
-            if (in_array($operation,['start','stop','bedrock-verify'],true)) {
+            if (in_array($operation,['start','stop','bedrock-verify','cleanup'],true)) {
                 $serverId=console_server_id(request_string($_POST,'server_id',64));
                 $row=$config['servers'][$serverId]??null;
                 if (!is_array($row) || ($row['deployment']??'native')!=='container') {
@@ -141,6 +156,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (($existing['container_name']??'')===$row['container_name']) {
                         throw new RuntimeException('This container is already registered.');
                     }
+                }
+            }
+            if ($operation==='cleanup') {
+                if (!is_array($row)||!dsm_cleanup_eligible($row,$serverId)) {
+                    throw new RuntimeException('Only managed Bedrock containers can be deleted here.');
+                }
+                if (request_string($_POST,'confirm_name',64)!==($row['name']??'')) {
+                    throw new RuntimeException('Enter the exact Minecraft server name to confirm cleanup.');
+                }
+                $removeWorldFiles=!empty($_POST['delete_world_files']);
+                if ($removeWorldFiles && request_string($_POST,'confirm_world_delete',12)!=='DELETE FILES') {
+                    throw new RuntimeException('Enter DELETE FILES to confirm permanent removal of Minecraft world files.');
                 }
             }
             $dsmUser=request_string($_POST,'dsm_account',64);
@@ -167,6 +194,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $config['servers'][$serverId]['install_state']='ready';
                     save_config($config);
                     $_SESSION['server_id']=$serverId;
+                }
+                if (($dsmReport['operation']??'')==='cleanup'&&$serverId!=='') {
+                    $cleaned=dsm_cleanup_registration($config,$serverId,$removeWorldFiles);
+                    $dsmReport['message'].=' '.$cleaned['message'];
+                    if (($_SESSION['server_id']??'')===$serverId)unset($_SESSION['server_id']);
                 }
                 $_SESSION['dsm_approval_tries']=0;
                 $message=$dsmReport['message'];
@@ -704,9 +736,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.10">
-<script src="assets/app.js?v=0.5.10" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.10" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.11">
+<script src="assets/app.js?v=0.5.11" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.11" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

@@ -299,3 +299,68 @@ document.addEventListener('DOMContentLoaded', () => {
   deployment.addEventListener('change', () => sync('deployment'));
   sync('init');
 });
+
+
+// DSM-controlled Minecraft containers need an explicit, visible action panel.
+// A hash link alone does not expand a closed <details> element.
+document.addEventListener('DOMContentLoaded', () => {
+  const panel=document.getElementById('mc-dsm-on-demand');
+  if (!panel) return;
+  const form=panel.querySelector('[data-dsm-approval]');
+  if (!form) return;
+  const operation=form.querySelector('[name="dsm_operation"]');
+  const target=form.querySelector('[name="server_id"]');
+  const cleanup=form.querySelector('[data-dsm-cleanup]');
+  const name=form.querySelector('[name="confirm_name"]');
+  const erase=form.querySelector('[name="delete_world_files"]');
+  const worldConfirm=form.querySelector('[name="confirm_world_delete"]');
+  const worldBox=form.querySelector('[data-dsm-world-confirm]');
+  const setOptions=()=>{
+    const destructive=operation.value==='cleanup';
+    cleanup.hidden=!destructive;
+    name.disabled=!destructive;
+    name.required=destructive;
+    erase.disabled=!destructive;
+    const worldDelete=destructive&&erase.checked;
+    worldBox.hidden=!worldDelete;
+    worldConfirm.disabled=!worldDelete;
+    worldConfirm.required=worldDelete;
+    if (!destructive){name.value='';erase.checked=false;worldConfirm.value='';}
+    if (destructive) {
+      const selected=target.selectedOptions[0];
+      name.placeholder=selected?.dataset.serverName||'Exact registered server name';
+    }
+  };
+  operation.addEventListener('change',setOptions);
+  target.addEventListener('change',setOptions);
+  erase.addEventListener('change',setOptions);
+  setOptions();
+  const openFor=(id,action)=>{
+    panel.open=true;
+    if (id && [...target.options].some(option=>option.value===id)) target.value=id;
+    if (action && [...operation.options].some(option=>option.value===action))
+      operation.value=action;
+    setOptions();
+    panel.scrollIntoView({behavior:'smooth',block:'start'});
+    if (operation.value==='cleanup') name.focus({preventScroll:true});
+    else form.querySelector('[name="dsm_account"]')?.focus({preventScroll:true});
+  };
+  document.addEventListener('click',event=>{
+    const link=event.target.closest('[data-dsm-open]');
+    if (!link) return;
+    event.preventDefault();
+    openFor(link.dataset.dsmOpen,link.dataset.dsmOperation);
+  });
+  document.addEventListener('click',event=>{
+    const link=event.target.closest('[data-dsm-forget]');
+    if (!link) return;
+    const details=document.getElementById('mc-forget-'+link.dataset.dsmForget);
+    if (!details) return;
+    event.preventDefault();
+    details.open=true;
+    details.scrollIntoView({behavior:'smooth',block:'center'});
+    details.querySelector('[name="confirm_name"]')?.focus({preventScroll:true});
+  });
+  const query=new URLSearchParams(window.location.search);
+  if (query.has('dsm_server')) openFor(query.get('dsm_server'),'bedrock-verify');
+});

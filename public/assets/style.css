@@ -173,3 +173,13 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 @media(max-width:610px){.mc-bedrock-wizard{padding:12px}.mc-bedrock-wizard .mc-wizard-checklist{grid-template-columns:1fr}.mc-bedrock-wizard .form-row{display:grid;grid-template-columns:1fr}.mc-bedrock-wizard .mc-wizard-auth input{max-width:none}}
 .mc-bedrock-wizard .mc-wizard-recovery-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
 .mc-bedrock-wizard .mc-wizard-recovery-actions button{margin:0}
+
+.mc-dsm-cleanup-options{padding:10px 12px;margin:9px 0;border:1px solid #e8d7c8;border-radius:8px;background:#fffaf6}
+.mc-dsm-cleanup-options[hidden],.mc-dsm-cleanup-options [hidden]{display:none!important}
+.mc-dsm-cleanup-options p{margin:5px 0 9px}
+.mc-dsm-cleanup-options label{margin:7px 0}
+.mc-dsm-cleanup-options input[name=confirm_name],.mc-dsm-cleanup-options input[name=confirm_world_delete]{max-width:440px}
+.mc-stale-server{border:1px solid #e8e0d6;border-radius:8px;padding:8px 11px;margin:8px 0 11px}
+.mc-stale-server summary{cursor:pointer;font-weight:600;font-size:12px}
+.mc-stale-server form{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:7px}
+.mc-stale-server input{max-width:260px;margin:4px 0 0}
