@@ -23,7 +23,7 @@ session_name('mcconfig_session');
 $privateSessions = data_dir() . DIRECTORY_SEPARATOR . 'sessions';
 if ((!is_dir($privateSessions) && !@mkdir($privateSessions, 0700, true)) || !is_writable($privateSessions)) {
     http_response_code(503);
-    exit('mcconfig cannot access its private session directory. Check PHP-FPM permissions and the Web Station open_basedir setting.');
+    exit('mcmanager cannot access its private session directory. Check the local web-server account, filesystem permissions and PHP open_basedir restrictions.');
 }
 session_save_path($privateSessions);
 session_start();
@@ -58,8 +58,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             save_config($config);
             session_regenerate_id(true);
             $_SESSION['authenticated'] = true;
-            $_SESSION['flash'] = 'Administrator created. Add a Minecraft server under Settings.';
-            redirect('settings');
+            $_SESSION['flash'] = 'Administrator created. Install a managed Minecraft server in Server Manager.';
+            redirect('manager');
         }
         if ($installed && $action === 'login') {
             $password = request_string($_POST, 'password', 512);
@@ -84,7 +84,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect();
         }
         if ($action==='dsm_quick') {
-            if (PHP_OS_FAMILY!=='Linux' ||
+            if (mc_platform()!=='dsm' ||
                 empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off' ||
                 strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))!=='xmlhttprequest') {
                 throw new RuntimeException('Open mcmanager over HTTPS to use the DSM server controls.');
@@ -120,7 +120,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($action === 'dsm_wizard') {
-            if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('The Bedrock installer requires Synology DSM on Linux.');
+            if (mc_platform()!=='dsm') throw new RuntimeException('DSM Bedrock installation is available only on this local Synology DSM host.');
             if (empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off') {
                 throw new RuntimeException('Open mcmanager over HTTPS to authorize Bedrock installation.');
             }
@@ -138,6 +138,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($action==='dsm_forget_server') {
+            if (mc_platform()!=='dsm')throw new RuntimeException('DSM registration removal is available only on Synology DSM.');
             $serverId=console_server_id(request_string($_POST,'server_id',64));
             $row=$config['servers'][$serverId]??null;
             if (!is_array($row)||!dsm_cleanup_eligible($row,$serverId)) {
@@ -152,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('manager');
         }
         if ($action === 'dsm_approve_once') {
-            if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('This approval mode is available only on a Synology/Linux installation.');
+            if (mc_platform()!=='dsm') throw new RuntimeException('This authorization mode requires Synology DSM.');
             if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off') {
                 throw new RuntimeException('Open mcmanager over HTTPS before entering DSM administrator credentials.');
             }
@@ -347,6 +348,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect('manager','&job='.$job);
         }
         if ($action === 'console_send') {
+            if (mc_platform()==='dsm' &&
+                ($config['servers'][(string)($_POST['server_id']??'')]['control_mode']??'')==='dsm-on-demand') {
+                throw new RuntimeException('DSM on-demand containers do not have an integrated command console. Use DSM Container Manager.');
+            }
             if (!manager_online()) throw new RuntimeException('Console is unavailable while the management worker is offline.');
             $serverId=console_server_id(request_string($_POST,'server_id',64));
             if (!isset($config['servers'][$serverId])) throw new InvalidArgumentException('Server is not registered.');
@@ -436,7 +441,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!in_array($edition,['java','bedrock'],true) || !in_array($deployment,['native','container'],true)) {
                 throw new InvalidArgumentException('Invalid discovered server.');
             }
-            if ($deployment==='container' && !manager_docker_capability()['available']) {
+            if ($deployment==='container' && (mc_platform()!=='dsm'||!manager_docker_capability()['available'])) {
                 throw new RuntimeException('Cannot adopt a container without Docker daemon access. Repair the mcmanager service account permissions first.');
             }
             foreach (($config['servers']??[]) as $existing) {
@@ -529,7 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!preg_match('/^[A-Za-z0-9_.-]{0,80}$/D', $containerName)) throw new InvalidArgumentException('Invalid Docker container name.');
             if (!in_array($edition, ['java', 'bedrock'], true)) throw new InvalidArgumentException('Select Java or Bedrock edition.');
             if (!in_array($deployment, ['native', 'container'], true)) throw new InvalidArgumentException('Select a native or container deployment.');
-            if ($deployment==='container' && !manager_docker_capability()['available']) {
+            if ($deployment==='container' && (mc_platform()!=='dsm'||!manager_docker_capability()['available'])) {
                 throw new RuntimeException('Container management is disabled until the mcmanager worker can access Docker. A manually created container also needs this permission for management.');
             }
             if ($edition === 'java' && $jar !== '' && !preg_match('/^[A-Za-z0-9._-]+\.jar$/iD', $jar)) throw new InvalidArgumentException('Use a simple .jar filename, not a path.');
@@ -810,9 +815,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.21">
-<script src="assets/app.js?v=0.5.21" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.21" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.22">
+<script src="assets/app.js?v=0.5.22" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.22" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
@@ -872,7 +877,10 @@ function stat_card(string $label, string $value, string $info = ''): void {
     </section>
     <?php $settingsPlatform=mc_platform();
       $settingsDocker=$settingsPlatform==='dsm'?manager_docker_capability():['available'=>false]; ?>
-    <section class="panel"><h2>Register an existing Minecraft server</h2>
+    <section class="panel" id="third-party-servers">
+      <details class="mc-feature-group">
+      <summary>Third-party local server import (advanced, optional)</summary>
+      <h2>Register an existing Minecraft server</h2>
       <p class="hint">This form only registers an existing folder. It does not download Minecraft, create a JAR or generate server.properties. For a new installation, use <a href="?tab=manager">Server Manager → Install a new Minecraft server</a>.</p>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="add_server">
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
@@ -881,12 +889,13 @@ function stat_card(string $label, string $value, string $info = ''): void {
         <?php if ($settingsPlatform==='dsm' && empty($settingsDocker['available'])): ?><p class="hint">DSM container registration is unavailable: <?= h($settingsDocker['message']??'Docker worker unavailable') ?>. Native server registration remains available.</p><?php endif; ?>
         <label>Server implementation <select name="software"><option value="vanilla">Vanilla Java</option><option value="paper">Paper Java</option><option value="spigot">Spigot Java</option><option value="bukkit">CraftBukkit Java</option><option value="fabric">Fabric Java</option><option value="forge">Forge Java</option><option value="neoforge">NeoForge Java</option><option value="bedrock">Bedrock</option></select></label>
         <label>Existing local server directory (must exist) <input name="path" placeholder="<?= h($settingsPlatform==='windows'?'C:\\Minecraft\\Server':($settingsPlatform==='dsm'?'/volume1/minecraft':'/srv/minecraft')) ?>" required></label>
-        <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
+        <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="<?= h($settingsPlatform==='windows'?'C:\\Minecraft\\Server\\worlds':($settingsPlatform==='dsm'?'/volume1/minecraft/worlds':'/srv/minecraft/worlds')) ?>"></label>
         <label>JAR filename (Java only, optional) <input name="jar" placeholder="server.jar"></label>
         <?php if ($settingsPlatform==='dsm'): ?><label>Existing Docker container name (container adoption only) <input name="container_name" placeholder="minecraft-paper"></label><?php endif; ?>
         <p class="hint"><?php if ($settingsPlatform==='dsm'): ?>For containers, enter DSM host paths rather than paths such as /data inside the container.<?php else: ?>Only local filesystem paths on this computer are supported. No remote server access is provided.<?php endif; ?> The PHP worker needs permission to read and write imported folders.</p>
         <button class="primary">Register existing server</button>
       </form>
+      </details>
     </section>
     <section class="panel"><h2>Administrator password</h2>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="password_change">
@@ -906,12 +915,19 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <div class="status-line"><span>open_basedir</span><code class="settings-path"><?= h(ini_get('open_basedir') ?: 'Not restricted') ?></code></div>
       <div class="status-line"><span>Upload maximum</span><strong><?= h(ini_get('upload_max_filesize')) ?></strong></div>
       <div class="status-line"><span>Post maximum</span><strong><?= h(ini_get('post_max_size')) ?></strong></div>
-      <p class="hint">Generic web hosting can edit accessible Minecraft files without a worker. Installation, lifecycle and container controls require the separate PHP CLI worker.</p>
+      <p class="hint">Managing and running Minecraft servers requires a local worker. The web interface and worker operate only on this computer. <?php if (mc_platform()==='dsm'): ?>Container Manager operations require the DSM module and appropriate authorization.<?php else: ?>Docker and DSM permissions are not required.<?php endif; ?></p>
     </section></div>
   <?php elseif ($tab === 'about'): ?>
-    <section class="panel prose"><h2>mcmanager</h2><p>Manage Java and Bedrock installations, settings, worlds, players, versions and backups. Start the optional local worker to provision servers and control native or container workloads.</p>
-      <p>The original mcconfig application was released for older Synology DSM systems. mcmanager uses the existing mcconfig package identifier for seamless upgrades. It supports native or host-bind-mounted container Java and Bedrock installations; a DSM 7.2+ package adds a separate PHP CLI management worker.</p>
-      <p>Java player lists use UUIDs; Bedrock uses Xbox gamertags/XUIDs. Existing imported servers retain their original installers and ownership. The optional worker performs only approved lifecycle operations and requires NAS permissions. Docker-only console logs remain in Container Manager; not every Minecraft distribution can be installed natively.</p>
+    <section class="panel prose"><h2>mcmanager</h2>
+      <p>Install and manage Minecraft servers on this computer only. Only the detected local platform module is enabled. Remote Minecraft hosts are not controlled through this interface.</p>
+      <?php if (mc_platform()==='windows'): ?>
+        <p>Windows manages native Java Vanilla/Paper and Bedrock servers. Java runtimes can be installed privately through the worker; Bedrock needs no Java. The Windows worker must remain running to supervise Minecraft. Automatic Windows service startup and reboot recovery are not yet implemented.</p>
+      <?php elseif (mc_platform()==='linux'): ?>
+        <p>Standard Linux supports native Java Vanilla/Paper with a separate process supervisor and managed Java runtimes. Native Bedrock installation remains under development.</p>
+      <?php elseif (mc_platform()==='dsm'): ?>
+        <p>On Synology DSM, mcmanager retains the original mcconfig package identifier for seamless upgrades. DSM provides native Java management and the isolated Container Manager Bedrock workflow. Administrative container operations use temporary DSM authorization.</p>
+      <?php endif; ?>
+      <p>The server dashboard, configuration, worlds and supported management features are shared. Java uses Java UUIDs and Bedrock uses Xbox gamertags/XUIDs. Importing an existing server installed by another tool is an optional advanced local-only workflow.</p>
       <p><a href="https://github.com/ardenee/mcconfig" target="_blank" rel="noopener noreferrer">GitHub project</a></p></section>
   <?php elseif ($server): ?>
     <?php

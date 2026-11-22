@@ -27,8 +27,14 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <p class="hint">PHP <?= h($workerInfo['php']??'not available') ?> · Last check <?= h(!empty($workerInfo['timestamp'])?date('H:i:s',(int)$workerInfo['timestamp']):'none') ?></p>
     <form method="post" class="inline-form"><?php hidden_csrf(); ?>
       <button name="action" value="manager_diagnostics" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Check hardware and Java</button>
-      <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Find existing servers</button>
     </form>
+    <details class="mc-feature-group">
+      <summary>Third-party local server discovery (optional)</summary>
+      <p class="hint">Search only known local Minecraft storage directories. Imported servers remain owned by their original installers; this is separate from creating a managed server.</p>
+      <form method="post" class="inline-form"><?php hidden_csrf(); ?>
+        <button name="action" value="manager_discover" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Find existing local servers</button>
+      </form>
+    </details>
   </details>
 </section>
 
@@ -112,7 +118,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 <section class="panel spaced" data-manager-servers>
   <h2>Your Minecraft servers</h2>
   <p class="hint">Green = running, red = stopped, yellow = needs attention or a status check. Select a server below; maintenance options are collapsed until needed.</p>
-  <?php if (!$all): ?><p class="empty">No Minecraft servers registered yet. Install one below, or import an existing server from discovery or Settings.</p><?php endif; ?>
+  <?php if (!$all): ?><p class="empty">No Minecraft servers registered yet. Install one below; advanced third-party local server import is optional under Settings.</p><?php endif; ?>
   <?php foreach($all as $id=>$row):
     $state=manager_running_state((string)$id);
     $pending=($row['install_state']??'')==='pending';
@@ -242,16 +248,23 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <form method="post" class="inline-form mc-secondary-actions">
         <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
         <input type="hidden" name="server_id" value="<?= h($id) ?>">
-        <?php foreach(['status'=>'Refresh','adopt'=>'Adopt','check_updates'=>'Check updates','backup'=>'Create backup'] as $operation=>$label): ?>
+        <?php foreach(['status'=>'Refresh','adopt'=>'Adopt','backup'=>'Create backup']+(
+            ($row['edition']??'java')==='bedrock' && ($row['deployment']??'native')==='native'
+            ? [] : ['check_updates'=>'Check updates']
+        ) as $operation=>$label): ?>
           <button class="subtle" name="operation" value="<?= h($operation) ?>"><?= h($label) ?></button>
         <?php endforeach; ?>
       </form>
-      <form method="post" class="inline-form spaced-small">
-        <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
-        <input type="hidden" name="server_id" value="<?= h($id) ?>">
-        <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
-        <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
-      </form>
+      <?php if (($row['edition']??'java')==='bedrock' && ($row['deployment']??'native')==='native'): ?>
+        <p class="hint">Native Bedrock software updates are not yet supported. The installation and its worlds remain untouched until a verified updater is available.</p>
+      <?php else: ?>
+        <form method="post" class="inline-form spaced-small">
+          <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_action">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <label>Target version <input name="version" placeholder="latest or release number" maxlength="48"></label>
+          <button class="subtle" name="operation" value="update" data-confirm="Update this server after stopping it and taking a backup?">Update software</button>
+        </form>
+      <?php endif; ?>
       <?php if (($row['edition']??'java')==='java' && ($row['deployment']??'native')==='native'): ?>
       <details class="manager-backups manager-startup">
         <summary>Startup settings - Java heap and JVM options</summary>
@@ -286,7 +299,11 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <?php endif; ?>
       <details class="manager-backups">
         <summary>Backups and restoration (<?= count(manager_backup_files((string)$id)) ?> snapshots)</summary>
-        <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders. Synology ACLs are not preserved; externally owned/imported folders may require manual permission repair. Older TAR archives are retained but not restored directly.</p>
+        <p class="hint">Backups require a stopped server. Restore verifies SHA-256, creates a safety snapshot and swaps server folders.
+        <?php if ($platform==='dsm'): ?>Synology ACLs are not preserved; imported folders may require permission repair.
+        <?php elseif ($platform==='windows'): ?>Custom Windows NTFS access control entries are not guaranteed to survive folder replacement; imported folders may require permission review.
+        <?php else: ?>Custom Linux permissions and extended ACLs are not guaranteed to survive folder replacement; imported folders may require permission review.<?php endif; ?>
+        Older TAR archives are retained but not restored directly.</p>
         <form method="post" class="inline-form spaced-small">
           <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_backup_retention">
           <input type="hidden" name="server_id" value="<?= h($id) ?>">

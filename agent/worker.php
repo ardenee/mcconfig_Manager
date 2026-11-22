@@ -710,8 +710,10 @@ function worker_native_stop(string $id,array &$native): void {
 
 function worker_discover(): array {
     $roots=[worker_root()];
-    foreach(['/volume1/docker','/volume1/minecraft','/volume2/docker','/volume2/minecraft'] as $root) {
-        if (is_dir($root) && is_readable($root)) $roots[]=$root;
+    if (mc_platform()==='dsm') {
+        foreach(['/volume1/docker','/volume1/minecraft','/volume2/docker','/volume2/minecraft'] as $root) {
+            if (is_dir($root) && is_readable($root)) $roots[]=$root;
+        }
     }
     $found=[];$seen=[];
     $walk=function(string $dir,int $depth) use (&$walk,&$found,&$seen):void {
@@ -720,10 +722,14 @@ function worker_discover(): array {
         if (!$real || isset($seen[$real])) return;
         $seen[$real]=true;
         if (is_file($dir.'/server.properties') && !is_link($dir.'/server.properties')) {
-            $edition=is_dir($dir.'/worlds')||is_file($dir.'/bedrock_server')?'bedrock':'java';
+            $edition=is_file($dir.'/bedrock_server.exe')||is_file($dir.'/bedrock_server')||
+                (is_dir($dir.'/worlds')&&is_file($dir.'/valid_known_packs.json'))?'bedrock':'java';
             $software=is_file($dir.'/paper.jar')||is_file($dir.'/paper.yml')?'paper':'vanilla';
             $found[]=['path'=>$real,'edition'=>$edition,'software'=>$software,
-                'name'=>basename($real),'deployment'=>str_contains($real,'docker')?'container':'native'];
+                // Discovery never assumes ownership of a Docker container
+                // from a directory name. Container adoption requires separate
+                // explicit verification on DSM.
+                'name'=>basename($real),'deployment'=>'native'];
             return;
         }
         foreach(scandir($dir)?:[] as $item) {
