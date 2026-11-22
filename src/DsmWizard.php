@@ -86,8 +86,10 @@ function dsm_wizard_step(array $post,array &$config,?callable $send=null): array
         } elseif ($step==='bedrock-verify'||$step==='bedrock-repair') {
             $config['servers'][$serverId]['install_state']='ready';
             save_config($config);
+            if (isset($result['state'])) dsm_record_observation($config,$serverId,$result);
             $result['server_id']=$serverId;
         } elseif ($step==='start') {
+            dsm_record_observation($config,$serverId,$result);
             $result['server_id']=$serverId;
         }
         return $result;

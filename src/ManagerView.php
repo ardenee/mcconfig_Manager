@@ -55,12 +55,13 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
             <?php if (array_filter($all,fn($s)=>is_array($s)&&($s['deployment']??'native')==='container'&&!empty($s['container_name']))): ?>
               <option value="start">Start one registered Minecraft container</option>
               <option value="stop">Stop one registered Minecraft container</option>
+              <option value="status">Read one registered Minecraft container status</option>
               <option value="bedrock-verify">Verify an installed Bedrock container</option>
               <option value="cleanup">Remove managed Bedrock container and registration</option>
             <?php endif; ?>
           </select>
         </label>
-        <label>Target (used only for Start/Stop)
+        <label>Target (for status, Start, Stop, verification and cleanup)
           <select name="server_id">
             <option value="">No target — authorization test</option>
             <?php foreach($all as $targetId=>$targetRow): ?>
@@ -114,7 +115,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     $pending=($row['install_state']??'')==='pending';
     $health=manager_server_status($row,$state,$workerOnline);
     $dsmOnly=($row['control_mode']??'')==='dsm-on-demand';
-    if ($dsmOnly) $health=['label'=>($row['install_state']??'ready')==='unverified'?'Needs DSM verification':'Check in DSM','tone'=>'warning','running'=>false,'stopped'=>false,'hint'=>'Authorize DSM Container Manager action to check this container'];
+    if ($dsmOnly) $health=dsm_observed_health($row);
     $status=$health['label'];
     $software=$row['software']??($row['edition']??'java');
     $detected=(($row['edition']??'java')==='java' && is_dir((string)($row['path']??'')))?
@@ -128,6 +129,11 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       </div><span data-server-status class="mc-status mc-status--<?= h($health['tone']) ?>" role="status" title="<?= h($health['hint']) ?>"><?= h($status) ?></span></div>
       <div class="mc-primary-actions" data-server-actions>
         <?php if ($dsmOnly): ?>
+          <?php if (($row['install_state']??'ready')==='ready'): ?>
+            <button type="button" class="mc-action-start" data-dsm-quick-action="start">Start</button>
+            <button type="button" class="subtle" data-dsm-quick-action="stop">Stop</button>
+            <button type="button" class="subtle" data-dsm-quick-action="status">Check status</button>
+          <?php endif; ?>
           <?php if (dsm_cleanup_eligible($row,(string)$id)): ?>
             <a class="subtle" href="?tab=manager&amp;resume_bedrock=<?= h($id) ?>#mc-create-bedrock">Verify / resume Bedrock</a>
           <?php endif; ?>
@@ -165,6 +171,26 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <a class="subtle" href="?tab=properties&amp;server=<?= h($id) ?>">Properties</a>
         <?php if (($row['edition']??'java')==='java'): ?><a class="subtle" href="?tab=plugins&amp;server=<?= h($id) ?>">Plugins</a><?php endif; ?>
       </div>
+      <?php if ($dsmOnly && ($row['install_state']??'ready')==='ready'): ?>
+        <form method="post" class="mc-dsm-quick-form" data-dsm-quick-form hidden autocomplete="off">
+          <?php hidden_csrf(); ?>
+          <input type="hidden" name="action" value="dsm_quick">
+          <input type="hidden" name="server_id" value="<?= h($id) ?>">
+          <input type="hidden" name="dsm_operation" value="status">
+          <strong data-dsm-quick-title>Authorize DSM action</strong>
+          <p class="hint">One-time DSM authorization for this server only. The password, OTP and DSM session are discarded after the action.</p>
+          <div class="form-row">
+            <label>DSM username<input name="dsm_account" required maxlength="64" autocomplete="off"></label>
+            <label>DSM password<input name="dsm_password" type="password" required maxlength="1024" autocomplete="new-password"></label>
+            <label>One-time code (optional)<input name="dsm_otp" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+          </div>
+          <div class="mc-dsm-quick-buttons">
+            <button type="submit" class="primary" data-dsm-quick-submit>Authorize status check</button>
+            <button type="button" class="subtle" data-dsm-quick-cancel>Cancel</button>
+          </div>
+        </form>
+        <p class="hint mc-dsm-quick-feedback" data-dsm-quick-feedback role="status" hidden></p>
+      <?php endif; ?>
       <?php if ($dsmOnly && dsm_cleanup_eligible($row,(string)$id)): ?>
         <details id="mc-forget-<?= h($id) ?>" class="mc-stale-server">
           <summary>Remove obsolete mcmanager entry (keep container and files)</summary>

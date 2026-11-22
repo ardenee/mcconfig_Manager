@@ -364,3 +364,101 @@ document.addEventListener('DOMContentLoaded', () => {
   const query=new URLSearchParams(window.location.search);
   if (query.has('dsm_server')) openFor(query.get('dsm_server'),'bedrock-verify');
 });
+
+
+// Inline one-time Synology container controls; forms are kept outside the
+// auto-refreshed server action row, so pending credentials are never replaced.
+document.addEventListener('DOMContentLoaded', () => {
+  const labels = {start:'Start',stop:'Stop',status:'Check status'};
+  const showFeedback = (card, message, error=false) => {
+    const feedback = card.querySelector('[data-dsm-quick-feedback]');
+    if (!feedback) return;
+    feedback.hidden = false;
+    feedback.dataset.result = error ? 'error' : 'success';
+    feedback.textContent = message;
+  };
+  document.addEventListener('click', event => {
+    const target = event.target.closest?.('[data-dsm-quick-action]');
+    if (target) {
+      event.preventDefault();
+      const card = target.closest('[data-server-card]');
+      const form = card?.querySelector('[data-dsm-quick-form]');
+      const operation = target.dataset.dsmQuickAction;
+      if (!form || !labels[operation] || form.dataset.busy === 'true') return;
+      form.querySelector('[name="dsm_operation"]').value = operation;
+      form.querySelector('[data-dsm-quick-title]').textContent =
+        'Authorize ' + labels[operation] + ' for this Minecraft server';
+      form.querySelector('[data-dsm-quick-submit]').textContent =
+        operation === 'status' ? 'Check status in DSM' : 'Authorize ' + labels[operation];
+      form.hidden = false;
+      form.querySelector('[name="dsm_password"]').value = '';
+      form.querySelector('[name="dsm_otp"]').value = '';
+      card.querySelector('[data-dsm-quick-feedback]').hidden = true;
+      form.querySelector('[name="dsm_account"]').focus();
+      return;
+    }
+    const cancel = event.target.closest?.('[data-dsm-quick-cancel]');
+    if (!cancel) return;
+    const form = cancel.closest('[data-dsm-quick-form]');
+    if (!form || form.dataset.busy === 'true') return;
+    form.querySelector('[name="dsm_password"]').value = '';
+    form.querySelector('[name="dsm_otp"]').value = '';
+    form.hidden = true;
+  });
+  document.addEventListener('submit', async event => {
+    const form = event.target.closest?.('[data-dsm-quick-form]');
+    if (!form) return;
+    event.preventDefault();
+    if (form.dataset.busy === 'true' || !form.reportValidity()) return;
+    const card = form.closest('[data-server-card]');
+    if (!card) return;
+    const operation = form.querySelector('[name="dsm_operation"]').value;
+    const submit = form.querySelector('[data-dsm-quick-submit]');
+    const password = form.querySelector('[name="dsm_password"]');
+    const otp = form.querySelector('[name="dsm_otp"]');
+    form.dataset.busy = 'true';
+    submit.disabled = true;
+    submit.textContent = 'Contacting DSM...';
+    showFeedback(card, labels[operation] + ' request in progress...');
+    try {
+      const endpoint = new URL('index.php', window.location.href);
+      const response = await fetch(endpoint.href, {
+        method:'POST', credentials:'same-origin', cache:'no-store',
+        headers:{'X-Requested-With':'XMLHttpRequest'},
+        body:new FormData(form)
+      });
+      if (!response.headers.get('content-type')?.includes('application/json')) {
+        throw new Error('mcmanager did not return a status reply. Sign in again and retry.');
+      }
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || 'DSM rejected the action.');
+      const observed = payload.result || {};
+      const health = payload.health || {};
+      if (typeof health.label === 'string' && ['running','stopped','warning'].includes(health.tone)) {
+        const badge = card.querySelector('[data-server-status]');
+        if (badge) {
+          badge.textContent = health.label;
+          badge.className = 'mc-status mc-status--' + health.tone;
+          badge.title = health.hint || '';
+        }
+      }
+      const current = observed.state === 'running' ? 'Running' :
+        observed.state === 'stopped' ? 'Stopped' : 'not yet confirmed';
+      const message = (operation === 'status' ? 'Status checked.' :
+        labels[operation] + ' request accepted.') +
+        ' DSM state: ' + current + '. ' +
+        (observed.state === 'unknown' ? 'Use Check status again to verify.' : '');
+      showFeedback(card, message);
+      form.hidden = true;
+    } catch (error) {
+      showFeedback(card, error.message || 'Unable to contact DSM.', true);
+      // Keep the form visible so the user can provide fresh credentials.
+    } finally {
+      password.value = '';
+      otp.value = '';
+      form.dataset.busy = 'false';
+      submit.disabled = false;
+      submit.textContent = operation === 'status' ? 'Check status in DSM' : 'Authorize ' + labels[operation];
+    }
+  });
+});

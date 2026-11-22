@@ -183,3 +183,16 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .mc-stale-server summary{cursor:pointer;font-weight:600;font-size:12px}
 .mc-stale-server form{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:7px}
 .mc-stale-server input{max-width:260px;margin:4px 0 0}
+
+
+/* One-step DSM controls live in each server card, never in a separate panel. */
+.mc-dsm-quick-form{border:1px solid #dce5ed;border-radius:10px;padding:12px 14px;margin:10px 0;background:#f7f9fc}
+.mc-dsm-quick-form[hidden],.mc-dsm-quick-feedback[hidden]{display:none!important}
+.mc-dsm-quick-form>strong{display:block;margin:0 0 5px}
+.mc-dsm-quick-form .hint{margin:3px 0 10px}
+.mc-dsm-quick-form .form-row{display:flex;flex-wrap:wrap;gap:10px}
+.mc-dsm-quick-form .form-row label{flex:1 1 160px;min-width:145px;display:flex;flex-direction:column;gap:5px;font-size:12px}
+.mc-dsm-quick-form input{width:100%;margin:0}
+.mc-dsm-quick-buttons{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px}
+.mc-dsm-quick-feedback{margin:8px 0;padding:7px 10px;border-left:3px solid #637e9d;background:#f0f4f8}
+.mc-dsm-quick-feedback[data-result=error]{border-color:#b1282b;background:#fff0f0}

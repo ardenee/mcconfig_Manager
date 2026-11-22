@@ -83,6 +83,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             session_regenerate_id(true);
             redirect();
         }
+        if ($action==='dsm_quick') {
+            if (PHP_OS_FAMILY!=='Linux' ||
+                empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off' ||
+                strtolower((string)($_SERVER['HTTP_X_REQUESTED_WITH']??''))!=='xmlhttprequest') {
+                throw new RuntimeException('Open mcmanager over HTTPS to use the DSM server controls.');
+            }
+            $serverId=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$serverId]??null;
+            if (!is_array($row)||($row['control_mode']??'')!=='dsm-on-demand'||
+                ($row['deployment']??'')!=='container') {
+                throw new RuntimeException('Select a registered DSM-controlled Minecraft container.');
+            }
+            $operation=request_string($_POST,'dsm_operation',24);
+            if (!in_array($operation,['start','stop','status'],true)) {
+                throw new RuntimeException('Unsupported server action.');
+            }
+            $user=request_string($_POST,'dsm_account',64);
+            $password=$_POST['dsm_password']??null;
+            $otp=request_string($_POST,'dsm_otp',8);
+            try {
+                if (!is_string($password)||$password==='') {
+                    throw new InvalidArgumentException('Enter the DSM administrator password.');
+                }
+                $dsmReport=dsm_approval_once($user,$password,$operation,$row,$otp);
+                dsm_record_observation($config,$serverId,$dsmReport);
+                $health=dsm_observed_health($config['servers'][$serverId]);
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode(['ok'=>true,'result'=>$dsmReport,
+                    'health'=>$health],JSON_THROW_ON_ERROR|JSON_INVALID_UTF8_SUBSTITUTE);
+                exit;
+            } finally {
+                unset($_POST['dsm_password'],$_POST['dsm_otp']);
+                if (is_string($password)&&function_exists('sodium_memzero'))sodium_memzero($password);
+                unset($password,$otp,$user);
+            }
+        }
         if ($action === 'dsm_wizard') {
             if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('The Bedrock installer requires Synology DSM on Linux.');
             if (empty($_SERVER['HTTPS'])||$_SERVER['HTTPS']==='off') {
@@ -123,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $operation=request_string($_POST,'dsm_operation',18);
             $row=null;
             $serverId='';
-            if (in_array($operation,['start','stop','bedrock-verify','cleanup'],true)) {
+            if (in_array($operation,['start','stop','status','bedrock-verify','cleanup'],true)) {
                 $serverId=console_server_id(request_string($_POST,'server_id',64));
                 $row=$config['servers'][$serverId]??null;
                 if (!is_array($row) || ($row['deployment']??'native')!=='container') {
@@ -181,6 +217,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $config['servers'][$serverId]['install_state']='ready';
                     save_config($config);
                     $_SESSION['server_id']=$serverId;
+                }
+                if ($serverId!=='' && isset($dsmReport['state']) &&
+                    in_array($operation,['start','stop','status','bedrock-verify'],true)) {
+                    dsm_record_observation($config,$serverId,$dsmReport);
                 }
                 if (($dsmReport['operation']??'')==='cleanup'&&$serverId!=='') {
                     $cleaned=dsm_cleanup_registration($config,$serverId,$removeWorldFiles);
@@ -575,6 +615,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = $e->getMessage();
         // Do not expose filesystem details in the login screen.
         if (!$authenticated && $installed && $action !== 'login') $error = 'Please log in.';
+        if ($action==='dsm_quick') {
+            http_response_code(400);
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode(['ok'=>false,'error'=>$error],JSON_INVALID_UTF8_SUBSTITUTE);
+            exit;
+        }
         if ($action==='dsm_wizard') {
             $phase=request_string($_POST,'dsm_operation',24);
             $advice=dsm_wizard_error_help($error,$phase);
@@ -722,9 +768,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.16">
-<script src="assets/app.js?v=0.5.16" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.16" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.17">
+<script src="assets/app.js?v=0.5.17" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.17" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

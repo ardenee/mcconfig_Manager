@@ -267,6 +267,93 @@ function dsm_approval_container_failure(array $details,array $server,string $nam
     return $message;
 }
 /**
+ * Read only Docker's runtime status. Never infer running from an action request
+ * or a saved DSM container profile. If DSM omits state, caller may query list.
+ */
+function dsm_container_runtime_state(array $details): string {
+    $sections=[$details];
+    for ($i=0;$i<count($sections)&&$i<12;$i++) {
+        $info=$sections[$i];
+        if (!is_array($info))continue;
+        foreach(['details','container','info','data'] as $key) {
+            if (is_array($info[$key]??null))$sections[]=$info[$key];
+        }
+        $runtime=$info['State']??$info['state']??null;
+        if (is_array($runtime)) {
+            if (($runtime['Running']??$runtime['running']??null)===true)return 'running';
+            if (($runtime['Running']??$runtime['running']??null)===false) {
+                $text=strtolower(trim((string)($runtime['Status']??$runtime['status']??'')));
+                if (in_array($text,['created','stopped','exited','dead'],true))return 'stopped';
+            }
+            $word=(string)($runtime['Status']??$runtime['status']??'');
+        } else {
+            $word=is_string($runtime)?$runtime:(string)($info['status']??'');
+        }
+        $word=strtolower(trim($word));
+        if ($word==='running'||str_starts_with($word,'up '))return 'running';
+        if (in_array($word,['created','stopped','exited','dead'],true)||
+            str_starts_with($word,'exited '))return 'stopped';
+    }
+    return 'unknown';
+}
+function dsm_container_runtime_observation(callable $api,string $name,array $details): array {
+    $state=dsm_container_runtime_state($details);
+    if ($state==='unknown') {
+        // Older DSM versions report only a name/image/profile in get.
+        // Fall back to their list status without assuming a result.
+        try {
+            $found=dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Container','version'=>'1','method'=>'list',
+                'limit'=>'-1','offset'=>'0','type'=>'all'
+            ]),'Container runtime state');
+            foreach(($found['containers']??[]) as $item) {
+                if (is_array($item)&&ltrim((string)($item['name']??''),'/')===$name) {
+                    $state=dsm_container_runtime_state($item);
+                    break;
+                }
+            }
+        } catch(Throwable) { /* Unknown is safer than inventing state. */ }
+    }
+    return ['state'=>$state,'checked_at'=>time()];
+}
+/** Only sanitized observed states are stored; no DSM sessions or secrets. */
+function dsm_record_observation(array &$config,string $serverId,array $result): void {
+    $state=$result['state']??'unknown';
+    if (!isset($config['servers'][$serverId])||
+        !in_array($state,['running','stopped','unknown'],true))return;
+    $config['servers'][$serverId]['dsm_state']=$state;
+    $config['servers'][$serverId]['dsm_state_checked_at']=$state==='unknown'
+        ?0:(int)($result['checked_at']??0);
+    save_config($config);
+}
+function dsm_observed_health(array $server): array {
+    if (($server['install_state']??'ready')==='unverified') {
+        return ['label'=>'Needs DSM verification','tone'=>'warning','running'=>false,
+            'stopped'=>false,'hint'=>'Verify the container image and /data storage'];
+    }
+    $state=(string)($server['dsm_state']??'unknown');
+    $checked=(int)($server['dsm_state_checked_at']??0);
+    $fresh=$checked>0 && time()>=$checked && time()-$checked<90;
+    if ($fresh&&$state==='running')return [
+        'label'=>'Running','tone'=>'running','running'=>true,'stopped'=>false,
+        'hint'=>'Confirmed running by DSM at '.date('Y-m-d H:i:s',$checked).
+            '. Check status again for a newer reading.'
+    ];
+    if ($fresh&&$state==='stopped')return [
+        'label'=>'Stopped','tone'=>'stopped','running'=>false,'stopped'=>true,
+        'hint'=>'Confirmed stopped by DSM at '.date('Y-m-d H:i:s',$checked).
+            '. Check status again for a newer reading.'
+    ];
+    if ($checked>0&&in_array($state,['running','stopped'],true))return [
+        'label'=>'Last seen '.($state==='running'?'running':'stopped'),
+        'tone'=>'warning','running'=>false,'stopped'=>false,
+        'hint'=>'Last confirmed by DSM at '.date('Y-m-d H:i:s',$checked).
+            '. Current status is not known until rechecked.'
+    ];
+    return ['label'=>'Status not checked','tone'=>'warning','running'=>false,
+        'stopped'=>false,'hint'=>'Use Check status with temporary DSM authorization'];
+}
+/**
  * $send callback allows offline simulation. Do not persist or log $password or
  * the returned DSM token/sid. Only registered/confirmed itzg + /data containers
  * can be started or stopped.
@@ -275,7 +362,7 @@ function dsm_approval_once(
     string $account,string $password,string $operation,
     ?array $server=null,string $otp='',?callable $send=null
 ): array {
-    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify','bedrock-repair','cleanup'],true)) {
+    if (!in_array($operation,['test','start','stop','bedrock-image','bedrock-pull','bedrock-poll','bedrock-create','bedrock-verify','bedrock-repair','cleanup','status'],true)) {
         throw new InvalidArgumentException('Unsupported DSM one-time operation.');
     }
     if (!preg_match('/^[\w.@-]{1,64}$/D',$account) ||
@@ -285,7 +372,7 @@ function dsm_approval_once(
     if ($otp!=='' && !preg_match('/^[0-9]{6,8}$/D',$otp)) {
         throw new InvalidArgumentException('Enter a valid DSM one-time verification code.');
     }
-    if (in_array($operation,['start','stop','bedrock-verify','bedrock-repair','cleanup'],true) && (!$server ||
+    if (in_array($operation,['start','stop','status','bedrock-verify','bedrock-repair','cleanup'],true) && (!$server ||
         ($server['deployment']??'native')!=='container' ||
         !in_array(($server['install_state']??'ready'),
             $operation==='bedrock-verify'||$operation==='bedrock-repair'||$operation==='cleanup'?['ready','imported','unverified']:['ready','imported'],true))) {
@@ -337,7 +424,8 @@ function dsm_approval_once(
                 throw new RuntimeException(dsm_approval_container_failure($details,$server,$name).' Nothing was started.');
             }
             return ['operation'=>'bedrock-verify','verified'=>true,'container'=>$name,
-                'message'=>'DSM verified the registered Bedrock container. Approve Start separately when ready.'];
+                'message'=>'DSM verified the registered Bedrock container. Approve Start separately when ready.']
+                +dsm_container_runtime_observation($api,$name,$details);
         }
         if ($operation==='cleanup') {
             // Only manager-created Bedrock containers can be removed.
@@ -421,14 +509,33 @@ function dsm_approval_once(
         if (!dsm_approval_container_matches($details,$server,$name)) {
             throw new RuntimeException(dsm_approval_container_failure($details,$server,$name).' Container could not be verified. No operation was performed.');
         }
+        if ($operation==='status') {
+            return ['operation'=>'status','container'=>$name,
+                'message'=>'DSM checked the container state. No action was performed.']
+                +dsm_container_runtime_observation($api,$name,$details);
+        }
         dsm_approval_checked($api([
             'api'=>'SYNO.Docker.Container','version'=>'1',
             'method'=>$operation,'name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
         ]),'Container '.$operation);
+        // The action being accepted does not prove the container is running
+        // or stopped. Perform an independent read-only observation.
+        $observation=['state'=>'unknown','checked_at'=>time()];
+        try {
+            $after=dsm_approval_checked($api([
+                'api'=>'SYNO.Docker.Container','version'=>'1',
+                'method'=>'get','name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
+            ]),'Post-action status');
+            if (dsm_approval_container_matches($after,$server,$name))
+                $observation=dsm_container_runtime_observation($api,$name,$after);
+        } catch(Throwable) { /* Accepted action, but new state unconfirmed. */ }
         return [
             'operation'=>$operation,'container'=>$name,
-            'message'=>'DSM authorized the '.($operation==='start'?'start':'stop').' operation on '.$name.'. No ongoing Docker permission was granted.'
-        ];
+            'message'=>'DSM accepted the '.($operation==='start'?'start':'stop').
+                ' action. '.($observation['state']==='unknown'
+                ?'Current runtime state has not been confirmed.'
+                :'Current runtime state was checked.').' No ongoing Docker permission was granted.'
+        ]+$observation;
     } finally {
         if ($session!=='') {
             try {
