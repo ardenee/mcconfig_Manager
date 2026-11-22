@@ -2,7 +2,8 @@
 $workerInfo=manager_heartbeat();
 $workerOnline=!empty($workerInfo['online']);
 $dockerAccess=manager_docker_capability();
-$dockerAvailable=!empty($dockerAccess['available']);
+$platform=mc_platform();
+$dockerAvailable=$platform==='dsm'&&!empty($dockerAccess['available']);
 $recent=manager_recent_jobs();
 $requestedJob=$_GET['job']??'';
 $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$requestedJob)
@@ -18,7 +19,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   </div>
   <?php if (!$workerOnline): ?>
     <div class="alert warning">The management service is offline; status information and server controls may not be available. Start mcconfig in DSM Package Center.</div>
-  <?php elseif (!$dockerAvailable): ?>
+  <?php elseif ($platform==='dsm' && !$dockerAvailable): ?>
     <p class="hint">The worker has no permanent Docker access. Use <strong>Install a Bedrock Edition server — one-time DSM authorization</strong> or the existing-container approval panel below. Image download, creation and start each require fresh DSM administrator authorization; nothing is stored.</p>
   <?php endif; ?>
   <details class="mc-worker-tools">
@@ -32,6 +33,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 </section>
 
 
+<?php if ($platform==='dsm'): ?>
 <?php require __DIR__.'/BedrockWizardView.php'; ?>
 
 <details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)||!empty($_GET['dsm_server'])?'open':'' ?>>
@@ -105,6 +107,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <?php endif; ?>
   <?php endif; ?>
 </details>
+<?php endif; ?>
 
 <section class="panel spaced" data-manager-servers>
   <h2>Your Minecraft servers</h2>
@@ -114,7 +117,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     $state=manager_running_state((string)$id);
     $pending=($row['install_state']??'')==='pending';
     $health=manager_server_status($row,$state,$workerOnline);
-    $dsmOnly=($row['control_mode']??'')==='dsm-on-demand';
+    $dsmOnly=$platform==='dsm'&&($row['control_mode']??'')==='dsm-on-demand';
     if ($dsmOnly) $health=dsm_observed_health($row);
     $status=$health['label'];
     $software=$row['software']??($row['edition']??'java');
@@ -389,7 +392,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
-  <?php if (!$dockerAvailable):
+  <?php if ($platform==='dsm' && !$dockerAvailable):
     $dockerGuide=manager_docker_permission_advice($dockerAccess);
     $dockerUser=(string)($dockerAccess['user']??'mcconfig');
     $dockerBin=(string)($dockerAccess['binary']??'docker');
@@ -446,23 +449,42 @@ ls -l /var/run/docker.sock</pre>
       <p class="hint">Native Java Vanilla/Paper remains available. Bedrock can now use the separate temporary DSM authorization installer above; this ongoing worker-access guide is optional, not required for the staged Bedrock workflow.</p>
     </div>
   <?php endif; ?>
-  <form method="post" class="manager-install">
+  <form method="post" enctype="multipart/form-data" class="manager-install">
     <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install">
     <div class="form-row">
       <label>Server name <input name="name" placeholder="Family server" maxlength="64" required></label>
-      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($dockerAvailable): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
+      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||$dockerAvailable): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
-      <label>Software <select name="software">
-        <option value="paper">Paper (Java)</option><option value="vanilla">Vanilla (Java)</option>
-        <?php if ($dockerAvailable): ?>
-        <option value="spigot">Spigot (container)</option><option value="bukkit">CraftBukkit (container)</option>
-        <option value="fabric">Fabric (container)</option><option value="forge">Forge (container)</option>
-        <option value="neoforge">NeoForge (container)</option><option value="purpur">Purpur (container)</option>
-        <option value="folia">Folia (container)</option><option value="bedrock">Bedrock Dedicated Server</option>
-        <?php endif; ?>
-      </select></label>
-      <label>Installation <select name="deployment"><option value="native">Native Java server</option><?php if ($dockerAvailable): ?><option value="container">Container Manager / Docker</option><?php endif; ?></select></label>
+      <div class="manager-software-field" data-software-help>
+        <label for="mc-install-software">Software</label>
+        <div class="manager-software-picker">
+          <select id="mc-install-software" name="software">
+            <option value="paper">Paper (Java)</option><option value="vanilla">Vanilla (Java)</option>
+            <?php if ($platform==='windows'): ?>
+            <option value="bedrock">Bedrock Dedicated Server (native)</option>
+            <?php elseif ($dockerAvailable): ?>
+            <option value="spigot">Spigot (container)</option><option value="bukkit">CraftBukkit (container)</option>
+            <option value="fabric">Fabric (container)</option><option value="forge">Forge (container)</option>
+            <option value="neoforge">NeoForge (container)</option><option value="purpur">Purpur (container)</option>
+            <option value="folia">Folia (container)</option><option value="bedrock">Bedrock Dedicated Server</option>
+            <?php endif; ?>
+          </select>
+          <button type="button" class="manager-software-info" data-software-info
+            aria-label="About the selected Minecraft server software" aria-expanded="false"
+            aria-controls="mc-software-description" title="What is this server software?">?</button>
+        </div>
+        <div class="manager-software-guide" id="mc-software-description" data-software-description
+             role="region" aria-label="Server software explanation" hidden>
+          <strong data-software-title>Paper</strong>
+          <p data-software-summary></p>
+          <a data-software-docs href="https://papermc.io/software/paper/"
+             target="_blank" rel="noopener noreferrer">Publisher documentation</a>
+          <button type="button" data-software-close class="manager-software-close"
+                  aria-label="Close server software explanation">Close</button>
+        </div>
+      </div>
+      <label>Installation <select name="deployment"><option value="native">Native local server (no Docker)</option><?php if ($dockerAvailable): ?><option value="container">DSM Container Manager</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
       <label>Version <input name="version" value="latest" maxlength="48" placeholder="latest or e.g. 26.2"></label>
@@ -480,13 +502,22 @@ ls -l /var/run/docker.sock</pre>
       <label class="check"><input type="checkbox" name="native_access" value="1"> Enable native access for trusted Java libraries (Java 25)
       </label>
       <input type="hidden" name="netty_workdir" value="0">
-      <label class="check"><input type="checkbox" name="netty_workdir" value="1" checked> Use server-local Netty native-library directory (recommended for DSM noexec /tmp)</label>
+      <label class="check"><input type="checkbox" name="netty_workdir" value="1" checked> Use server-local Netty native-library directory (recommended for restricted temporary directories)</label>
     </details>
+    <?php if ($platform==='windows'): ?>
+      <details class="manager-install-launch" data-windows-bedrock-upload hidden>
+        <summary>Download blocked? Upload the official Bedrock server ZIP instead</summary>
+        <p class="hint">Download the Windows ZIP from <a href="https://www.minecraft.net/en-us/download/server/bedrock" target="_blank" rel="noopener noreferrer">Mojang's official Bedrock server page</a> and upload it here. mcmanager still creates and manages its own new server folder. The ZIP must match Mojang's latest published server filename; uploaded executables cannot be independently publisher-verified by SHA-256.</p>
+        <label>Windows Bedrock server ZIP (optional)
+          <input name="bedrock_archive" type="file" accept=".zip">
+        </label>
+      </details>
+    <?php endif; ?>
     <label class="check"><input name="eula" type="checkbox" value="1" required>
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
-  <p class="hint">Native managed installation supports Java Vanilla and Paper. <?php if ($dockerAvailable): ?>Containers can also be installed and adopted with validated Docker access.<?php else: ?>Container/Bedrock deployment is hidden until the worker has verified Docker access.<?php endif; ?> No host Java packages are modified.</p>
+  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally; native Bedrock installation is being certified separately.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> All newly created server data stays under mcmanager-owned storage.</p>
 </section>
 
 </details>
@@ -495,13 +526,13 @@ ls -l /var/run/docker.sock</pre>
 <summary>Java runtimes and installation</summary>
 <section class="panel spaced">
   <div class="panel-title"><div><h2>Java runtime management</h2>
-    <p class="muted">Install a managed Eclipse Temurin JRE without replacing DSM's system Java. Every method verifies the official SHA-256 and the executable's Linux CPU architecture.</p></div>
+    <p class="muted">Install or update Eclipse Temurin JREs side by side without changing the host's system Java. Archives are verified and matched to the local OS and CPU.</p></div>
     <strong><?= h(php_uname('m')) ?></strong>
   </div>
   <div class="manager-install-options">
     <div class="manager-method">
       <h3>1. Known official downloads</h3>
-      <p class="hint">Latest official JRE for this NAS. The worker resolves its current upstream download link and SHA-256.</p>
+      <p class="hint">Latest official JRE for this local computer. The worker resolves its current upstream download link and SHA-256.</p>
       <form method="post">
         <?php hidden_csrf(); ?>
         <input type="hidden" name="action" value="manager_install_java">
@@ -531,18 +562,18 @@ ls -l /var/run/docker.sock</pre>
     </div>
     <div class="manager-method">
       <h3>3. Upload Java archive</h3>
-      <p class="hint">Upload the matching official Temurin Linux JRE <code>.tar.gz</code> archive. The worker rejects an incorrect CPU architecture or checksum.</p>
+      <p class="hint">Upload the matching official Temurin JRE <?= $platform==='windows'?'<code>.zip</code>':'<code>.tar.gz</code>' ?> archive. The worker rejects an incorrect CPU architecture or checksum.</p>
       <form method="post" enctype="multipart/form-data">
         <?php hidden_csrf(); ?>
         <input type="hidden" name="action" value="manager_install_java">
         <input type="hidden" name="source" value="upload">
         <label>Java release <select name="major"><option value="21">Java 21</option><option value="25">Java 25</option><option value="17">Java 17</option></select></label>
-        <label>Temurin archive <input name="java_archive" type="file" accept=".gz,.tgz,.tar.gz" required></label>
+        <label>Temurin archive <input name="java_archive" type="file" accept="<?= $platform==='windows'?'.zip':'.gz,.tgz,.tar.gz' ?>" required></label>
         <button class="subtle" <?= !$workerOnline?'disabled':'' ?>>Upload and install</button>
       </form>
     </div>
   </div>
-  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both under DSM Web Station → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Container servers use Java inside their image.</p>
+  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both in the local PHP configuration<?php if ($platform==='dsm'): ?> or DSM Web Station<?php endif; ?> → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Java Edition needs a compatible runtime; native Bedrock does not need Java.</p>
 </section>
 
 </details>

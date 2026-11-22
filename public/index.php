@@ -466,6 +466,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('A registered server is already using this edition and port.');
                 }
             }
+            // Optional official Bedrock ZIP, uploaded for this one owned install.
+            // The signed queue receives the token; it is never saved as a server setting.
+            $installParams=$options+['eula'=>'1'];
+            if (mc_platform()==='windows' && $options['edition']==='bedrock' &&
+                ($_FILES['bedrock_archive']['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_NO_FILE) {
+                $uploaded=manager_upload_file($_FILES['bedrock_archive'],'bedrock');
+                $installParams['bedrock_upload_id']=$uploaded['upload_id'];
+                $installParams['bedrock_upload_sha']=$uploaded['sha256'];
+                $installParams['bedrock_upload_name']=$uploaded['filename'];
+            }
             $id=bin2hex(random_bytes(6));
             $root=manager_instances_root();
             $path=rtrim($root,'/\\').DIRECTORY_SEPARATOR.$id;
@@ -473,7 +483,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'worlds_path'=>'','install_state'=>'pending'];
             save_config($config);
             $_SESSION['server_id']=$id;
-            $job=manager_enqueue('install',$options+['eula'=>'1'],$id);
+            $job=manager_enqueue('install',$installParams,$id);
             redirect('manager','&job='.$job);
         }
         if ($action === 'add_server') {
@@ -768,9 +778,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.18">
-<script src="assets/app.js?v=0.5.18" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.18" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.19">
+<script src="assets/app.js?v=0.5.19" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.19" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

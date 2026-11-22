@@ -261,7 +261,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const software = form.querySelector('select[name="software"]');
   const deployment = form.querySelector('select[name="deployment"]');
   const port = form.querySelector('input[name="port"]');
-  const native = form.querySelector('.manager-install-launch');
+  const native = form.querySelector('.manager-install-launch:not([data-windows-bedrock-upload])');
+  const bedrockUpload = form.querySelector('[data-windows-bedrock-upload]');
   if (!edition || !software || !deployment) return;
   let updating = false;
   const sync = changed => {
@@ -292,6 +293,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (port && port.value === '19132') port.value = '25565';
       }
       if (native) native.hidden = deployment.value !== 'native' || edition.value !== 'java';
+      if (bedrockUpload) bedrockUpload.hidden = edition.value !== 'bedrock';
     } finally { updating = false; }
   };
   edition.addEventListener('change', () => sync('edition'));
@@ -300,6 +302,106 @@ document.addEventListener('DOMContentLoaded', () => {
   sync('init');
 });
 
+
+// Contextual server-software explanations are intentionally hidden until the
+// user clicks "?". Only publisher documentation URLs from this fixed map load.
+document.addEventListener('DOMContentLoaded', () => {
+  const form = document.querySelector('form.manager-install');
+  const field = form?.querySelector('[data-software-help]');
+  if (!field) return;
+  const select = field.querySelector('select[name="software"]');
+  const toggle = field.querySelector('[data-software-info]');
+  const panel = field.querySelector('[data-software-description]');
+  const title = field.querySelector('[data-software-title]');
+  const summary = field.querySelector('[data-software-summary]');
+  const docs = field.querySelector('[data-software-docs]');
+  const closeButton = field.querySelector('[data-software-close]');
+  if (!select || !toggle || !panel || !title || !summary || !docs || !closeButton) return;
+  const software = {
+    paper: {
+      name:'Paper',
+      description:'Performance-focused Java server with Paper/Bukkit/Spigot plugins. Great for server tools and custom features; some Vanilla mechanics can behave differently.',
+      url:'https://papermc.io/software/paper/'
+    },
+    vanilla: {
+      name:'Vanilla',
+      description:'Mojang’s official, unmodified Java server. Best for original game behaviour and datapacks; it does not load Paper/Bukkit plugin JARs.',
+      url:'https://www.minecraft.net/en-us/download/server'
+    },
+    spigot: {
+      name:'Spigot',
+      description:'Java server built on CraftBukkit, adding optimizations and Bukkit/Spigot plugin support. Paper is a related, more extensively optimized alternative.',
+      url:'https://www.spigotmc.org/wiki/about-spigotmc/'
+    },
+    bukkit: {
+      name:'CraftBukkit',
+      description:'Traditional Java server supporting Bukkit plugins. Often used for legacy plugin compatibility; Spigot and Paper provide additional server optimizations.',
+      url:'https://www.spigotmc.org/wiki/spigot-installation/'
+    },
+    fabric: {
+      name:'Fabric',
+      description:'Lightweight Java mod loader, not a Bukkit plugin server. For Fabric mods or modpacks; players may need matching client-side mods.',
+      url:'https://fabricmc.net/'
+    },
+    forge: {
+      name:'Forge',
+      description:'Java mod loader for Forge-compatible mods and modpacks. Check the modpack’s Minecraft and Forge versions; clients commonly need matching mods.',
+      url:'https://files.minecraftforge.net/'
+    },
+    neoforge: {
+      name:'NeoForge',
+      description:'Java modding platform for NeoForge-compatible mods and modpacks. Choose this only for mods requiring NeoForge; client mods may also be necessary.',
+      url:'https://neoforged.net/'
+    },
+    purpur: {
+      name:'Purpur',
+      description:'Paper-based Java server with extensive gameplay and behaviour customization. Supports Paper plugins but can differ significantly from Vanilla when configured.',
+      url:'https://purpurmc.org/docs/purpur/'
+    },
+    folia: {
+      name:'Folia',
+      description:'Specialized Paper fork that uses region-based multithreading. Check plugin compatibility carefully: ordinary Paper plugins may not work without Folia support.',
+      url:'https://papermc.io/software/folia/'
+    },
+    bedrock: {
+      name:'Bedrock Dedicated Server',
+      description:'Mojang’s official native server for Bedrock Edition. It does not need a Java runtime and cannot use Java Paper/Bukkit plugins.',
+      url:'https://www.minecraft.net/en-us/download/server/bedrock'
+    }
+  };
+  const close = () => {
+    panel.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+  };
+  const update = () => {
+    const item = software[select.value];
+    toggle.title = item ? 'What is ' + item.name + '?' : 'About this server software';
+    if (!item) { close(); return; }
+    title.textContent = item.name;
+    summary.textContent = item.description;
+    docs.href = item.url;
+  };
+  toggle.addEventListener('click', () => {
+    update();
+    panel.hidden = !panel.hidden;
+    toggle.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  select.addEventListener('change', update);
+  closeButton.addEventListener('click', () => {
+    close();
+    toggle.focus();
+  });
+  field.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !panel.hidden) {
+      close();
+      toggle.focus();
+    }
+  });
+  document.addEventListener('click', event => {
+    if (!panel.hidden && !field.contains(event.target)) close();
+  });
+  update();
+});
 
 // DSM-controlled Minecraft containers need an explicit, visible action panel.
 // A hash link alone does not expand a closed <details> element.

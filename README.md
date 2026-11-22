@@ -9,6 +9,10 @@ The generic PHP application is the **primary distribution**. The optional DSM 7.
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** Manage independent native Java and Minecraft containers. Native Java Vanilla/Paper requires no Docker. On Synology DSM, Bedrock has an on-page installation wizard using temporary DSM administrator authorization, without permanent Docker socket/group permissions. Advanced Docker-worker access remains optional.
 - **Bedrock installation wizard (DSM, experimental):** Enter the server name, optional UDP port and memory limit, DSM administrator credentials and Minecraft EULA acceptance **once**; click **Install Bedrock server**. The wizard automatically checks or downloads the official Bedrock Docker image, monitors the download, creates an isolated persistent /data container, verifies it, and starts it when requested. A compact progress display and in-place Retry show the specific failed step and recovery instructions. Credentials remain only in the browser form during installation and are discarded afterwards; each backend API request logs in and out without saving credentials or granting permanent Docker access. Container Manager's create/image APIs still require real NAS validation.
+- **Three exclusive local OS modules (0.5.19):** Detect Windows, standard Linux and Synology DSM; only the local module's deployment options are enabled. Windows installs Java Vanilla/Paper and native Bedrock without Docker or BIOS virtualization; DSM retains its existing Container Manager wizard; standard Linux keeps the native Java installer. No remote host management is implemented.
+- **Windows local Java installation and monitoring (0.5.19):** Verified on game-amd with an isolated Windows PHP web interface and CLI worker: official Mojang Vanilla 26.3 and stable Paper 26.3 servers were installed, started, pinged and stopped; the web installer and Start/Stop job queue also passed live tests. A publisher-checksummed Temurin 25 Windows ZIP was installed side by side through both CLI and web operations without changing system Java.
+- **Windows native Bedrock installer (0.5.19, binary not yet live-certified):** Resolves the official Mojang Bedrock Windows ZIP link, checks extraction paths, symlinks, collision rules and the executable's x64 PE architecture, configures the server, and uses the regular native process worker. Mojang's CDN was returning no ZIP body on the DEV host even though the official catalog worked, so an optional official ZIP upload is available in the same managed installer. Uploaded ZIPs are checked against Mojang's current published filename, upload SHA-256, safe contents and x64 executable format, but without an independently supplied publisher hash their publisher identity cannot be cryptographically established. Real Bedrock startup and UDP status still require live testing.
+- **Contextual server-software help (0.5.19):** A compact question-mark control beside the software selection explains Vanilla, Paper, Bedrock and the currently offered mod/plugin software and links directly to publishers without cluttering the form.
 - **DSM state-aware lifecycle controls (0.5.18):** Bedrock cards show Stop and Check status when DSM confirms Running, Start and Check status when DSM confirms Stopped, and only Check status when the reading is stale or unknown. The Start button is never presented as a green primary action on an already-running container. AJAX updates the controls immediately after each DSM observation, and the periodic dashboard refresh retains the same logic.
 - **DSM server-card controls (0.5.17):** DSM-managed Bedrock server cards now show **Start**, **Stop**, and **Check status**. Each opens a short inline DSM administrator authorization form, makes one scoped HTTPS request and logs out, then immediately discards the password, OTP and token. The verified server image and `/data` bind mount are checked before lifecycle operations. The status badge shows **Running** or **Stopped** only for a recent DSM-confirmed observation; after 90 seconds it says **Last seen running/stopped** until checked again. No persistent privileged access is granted or stored.
 - **DSM dual-path bind mount verification (0.5.16):** Verifies actual Docker /data runtime mounts first, before HostConfig and saved Synology profile aliases. The real /volume1/@appdata bind mount now takes precedence over the unreadable Synology /@appdata display alias, while genuinely incorrect runtime mounts and anonymous volumes remain blocked. Recovery clearly offers Verify existing Bedrock container and only offers destructive repair for anonymous @docker volumes. The verification operation never creates, deletes or starts containers. Tests cover the dual-path case and contradictory mounts.
@@ -46,10 +50,23 @@ Minecraft itself is not bundled.
 
 **Hardware:** actual Java, CPU architecture, available RAM and disk space are checked before managed installations. Bedrock Linux images require supported x86-64 hardware. A managed Java installation uses the host's existing Java or a compatible managed Temurin runtime; containers provide their own Java.
 
+## Windows local installation — initial support
+
+Windows requires PHP 8.2+ with CLI, zip, curl and OpenSSL. Extract the generic web ZIP, configure a local Apache/IIS HTTPS site with **public/** as the document root, and use private writable storage outside the web root. The worker and web PHP process must share the same **MCCONFIG_DATA_DIR** and **MCMANAGER_INSTANCES_DIR** environment variables, for example:
+
+    set MCCONFIG_DATA_DIR=C:\\mcmanager-data
+    set MCMANAGER_INSTANCES_DIR=C:\\mcmanager-instances
+    php agent/worker.php doctor
+    php agent/worker.php serve
+
+The Windows worker **must remain running** for process supervision. A production-grade Windows Service/Task Scheduler installer and reboot recovery are not yet provided. The PHP built-in web server is used for local DEV testing only, never as a production Internet-facing server. Managed installations create private server directories automatically; remote hosts, Docker and manual folder selection are not required.
+
+Managed native Java Vanilla and Paper use the official Minecraft server downloads and compatible Java runtimes, installing or upgrading official SHA-256-verified Temurin ZIPs side by side where necessary. Bedrock runs **bedrock_server.exe** and requires no Java or virtualization. Mojang's official Bedrock ZIP body did not download on the DEV network during testing, so use the upload fallback if you have obtained the latest official archive. Native Bedrock's real process startup and protocol monitoring are not yet certified.
+
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.16.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.5.19.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Register an existing Minecraft server** only to attach an existing folder; it does not install Minecraft or create properties. Use **Server Manager > Install a new Minecraft server** to provision a new instance, then install the required Java runtime. The JAR management tab can install a verified native Java server JAR into a registered directory.
 
@@ -73,8 +90,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.5.16.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.16.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.5.19.zip — generic web deployment
+- dist/mcmanager-DSM7-0.5.19.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip, zlib and curl. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 

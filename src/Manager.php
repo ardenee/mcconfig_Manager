@@ -1,5 +1,6 @@
 <?php
 declare(strict_types=1);
+require_once __DIR__.'/Platform.php';
 /**
  * mcmanager's unprivileged web/worker job exchange.
  * The PHP web process never executes system commands or accesses Docker.
@@ -190,8 +191,16 @@ function manager_install_input(array $post): array {
     if ($version!=='' && $version!=='latest' && !preg_match('/^[0-9a-zA-Z][0-9a-zA-Z._-]{0,47}$/D',$version))
         throw new InvalidArgumentException('Invalid Minecraft version.');
     if (empty($post['eula'])) throw new InvalidArgumentException('You must read and accept the Minecraft EULA before installing.');
-    if ($deployment==='native' && !($edition==='java' && in_array($software,['vanilla','paper'],true))) {
-        throw new InvalidArgumentException('Managed native installation currently supports Vanilla and Paper Java. Use a container for other variants.');
+    $platform=mc_platform();
+    if ($platform==='unsupported')
+        throw new InvalidArgumentException('Native installation is supported on Windows and Linux only.');
+    if ($platform!=='dsm' && $deployment==='container') {
+        throw new InvalidArgumentException('This local platform module installs native Minecraft servers only. Docker is not required.');
+    }
+    if ($deployment==='native' &&
+        !(($edition==='java' && in_array($software,['vanilla','paper'],true)) ||
+          ($edition==='bedrock' && $software==='bedrock' && $platform==='windows'))) {
+        throw new InvalidArgumentException('Native installation supports Java Vanilla/Paper and Windows Bedrock. Other native installers are not yet implemented.');
     }
     $options=compact('name','edition','software','deployment','version','port','memory');
     if ($deployment==='native' && $edition==='java') {

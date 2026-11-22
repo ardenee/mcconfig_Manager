@@ -2,7 +2,7 @@
 declare(strict_types=1);
 /** Private uploads for authenticated administrator jobs only. */
 function manager_upload_file(array $upload,string $kind): array {
-    $max=in_array($kind,['java','server_jar'],true)?536870912:($kind==='plugin'?134217728:0);
+    $max=in_array($kind,['java','server_jar'],true)?536870912:($kind==='bedrock'?250000000:($kind==='plugin'?134217728:0));
     if (!$max) throw new InvalidArgumentException('Unsupported upload type.');
     if (($upload['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK ||
         !is_string($upload['name']??null) || !is_string($upload['tmp_name']??null) ||
@@ -12,9 +12,16 @@ function manager_upload_file(array $upload,string $kind): array {
     }
     $filename=basename(str_replace('\\','/',$upload['name']));
     if ($kind==='java') {
-        if (!preg_match('/^[a-zA-Z0-9_.+-]{1,160}\.(?:tar\.gz|tgz)$/iD',$filename)) {
-            throw new InvalidArgumentException('Choose a Temurin Linux JRE tar.gz archive.');
+        $pattern=PHP_OS_FAMILY==='Windows'
+            ?'/^[a-zA-Z0-9_.+-]{1,160}\.zip$/iD'
+            :'/^[a-zA-Z0-9_.+-]{1,160}\.(?:tar\.gz|tgz)$/iD';
+        if (!preg_match($pattern,$filename)) {
+            throw new InvalidArgumentException('Choose an official Temurin archive matching this operating system.');
         }
+    } elseif ($kind==='bedrock' &&
+        (PHP_OS_FAMILY!=='Windows' ||
+         !preg_match('/^bedrock-server-\d+(?:\.\d+){2,4}\.zip$/iD',$filename))) {
+        throw new InvalidArgumentException('Choose the official Windows Bedrock Dedicated Server ZIP.');
     } elseif ($kind==='plugin' && !preg_match('/^[A-Za-z0-9_.-]{1,112}\.(?:jar|zip)$/iD',$filename)) {
         throw new InvalidArgumentException('Choose a plugin JAR or ZIP package.');
     } elseif ($kind==='server_jar' && !preg_match('/^[A-Za-z0-9_.-]{1,112}\.jar$/iD',$filename)) {

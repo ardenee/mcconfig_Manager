@@ -5,11 +5,12 @@ declare(strict_types=1);
  * Source: api.adoptium.net, checksum verified before extraction.
  */
 function worker_java_architecture(): string {
-    if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Managed Java installation requires Linux.');
+    if (!in_array(PHP_OS_FAMILY,['Linux','Windows'],true))
+        throw new RuntimeException('Managed Java requires Windows or Linux.');
     return match(strtolower(php_uname('m'))) {
         'x86_64','amd64'=>'x64',
         'aarch64','arm64'=>'aarch64',
-        default=>throw new RuntimeException('No supported Temurin JRE for NAS CPU '.php_uname('m'))
+        default=>throw new RuntimeException('No supported Temurin JRE for CPU '.php_uname('m'))
     };
 }
 function worker_java_validate_binary_arch(string $file,string $arch): void {
@@ -25,7 +26,8 @@ function worker_java_validate_binary_arch(string $file,string $arch): void {
 function worker_java_asset(int $major): array {
     if (!in_array($major,[17,21,25],true)) throw new InvalidArgumentException('Managed Java supports LTS 17, 21 and 25.');
     $arch=worker_java_architecture();
-    $url="https://api.adoptium.net/v3/assets/latest/$major/hotspot?architecture=$arch&image_type=jre&os=linux&vendor=eclipse";
+    $os=PHP_OS_FAMILY==='Windows'?'windows':'linux';
+    $url="https://api.adoptium.net/v3/assets/latest/$major/hotspot?architecture=$arch&image_type=jre&os=$os&vendor=eclipse";
     $assets=worker_json_url($url,['api.adoptium.net']);
     if (!isset($assets[0]) || !is_array($assets[0])) throw new RuntimeException('Adoptium does not list a compatible release.');
     $package=$assets[0]['binary']['package']??[];
@@ -36,7 +38,8 @@ function worker_java_asset(int $major): array {
     }
     worker_allowed_url($link,['github.com']);
     $name=(string)($package['name']??'');
-    if (!str_ends_with($name,'.tar.gz')) throw new RuntimeException('Unexpected Java archive format.');
+    if (!str_ends_with($name,$os==='windows'?'.zip':'.tar.gz'))
+        throw new RuntimeException('Unexpected Temurin archive format for '.$os.'.');
     return ['major'=>$major,'architecture'=>$arch,'url'=>$link,'sha256'=>strtolower($sha),
         'release'=>(string)($assets[0]['release_name']??'unknown')];
 }
@@ -99,7 +102,8 @@ function worker_download_java_archive(string $url,string $expected,string $targe
 }
 function worker_managed_java(int $major): ?string {
     if (!in_array($major,[17,21,25],true)) return null;
-    $bin=worker_root().'/runtimes/temurin-'.$major.'/bin/java';
+    $bin=worker_root().'/runtimes/temurin-'.$major.'/bin/java'.
+        (PHP_OS_FAMILY==='Windows'?'.exe':'');
     if (!is_file($bin) || !is_executable($bin)) return null;
     return $bin;
 }
@@ -116,6 +120,7 @@ function worker_choose_java(string $version): string {
     return $system;
 }
 function worker_install_java(int $major,array $options=[]): array {
+    if (PHP_OS_FAMILY==='Windows')return windows_java_install($major,$options);
     $asset=worker_java_asset($major);
     $mode=(string)($options['source']??'catalog');
     if (!in_array($mode,['catalog','url','upload'],true)) {

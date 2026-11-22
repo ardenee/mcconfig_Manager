@@ -5,6 +5,8 @@ if (PHP_SAPI !== 'cli') { http_response_code(403); exit; }
 require dirname(__DIR__).'/src/App.php';
 require dirname(__DIR__).'/src/Manager.php';
 require __DIR__.'/JavaRuntime.php';
+require __DIR__.'/WindowsBedrock.php';
+require __DIR__.'/WindowsJava.php';
 require dirname(__DIR__).'/src/Uploads.php';
 require dirname(__DIR__).'/src/Plugins.php';
 require dirname(__DIR__).'/src/PluginPackages.php';
@@ -373,14 +375,20 @@ function worker_install(string $id,array $post,array &$native): array {
     // Do not create an incomplete world directory if the required Java runtime
     // is absent. Preflight JRE architecture/version before provisioning storage.
     $artifact=null;
-    if ($opts['deployment']==='native') {
+    if ($opts['deployment']==='native' && $opts['edition']==='java') {
         $artifact=worker_latest($opts['software'],$opts['version']);
-        $java=worker_choose_java((string)$artifact['version']);
-        $runtime=worker_java_version($java);
         $min=(int)($artifact['java_major']??worker_required_java((string)$artifact['version']));
-        if ($min===0 || $runtime['major']<$min) {
-            throw new RuntimeException('No compatible Java runtime installed. The selected Minecraft version requires Java '.$min.'. Install official Temurin in Server Manager first.');
+        if ($min===0)throw new RuntimeException('Minecraft Java runtime requirement could not be established.');
+        try { $java=worker_choose_java((string)$artifact['version']); }
+        catch(RuntimeException $missing) {
+            if (PHP_OS_FAMILY!=='Windows'||!in_array($min,[17,21,25],true))throw $missing;
+            worker_progress(15,'Installing compatible Java '.$min.' automatically');
+            worker_install_java($min);
+            $java=worker_choose_java((string)$artifact['version']);
         }
+        $runtime=worker_java_version($java);
+        if ($runtime['major']<$min)
+            throw new RuntimeException('No compatible Java runtime installed. Minecraft requires Java '.$min.'.');
     }
     $root=worker_root();
     $path=$root.DIRECTORY_SEPARATOR.$id;
@@ -400,6 +408,16 @@ function worker_install(string $id,array $post,array &$native): array {
             if ($code!==0) throw new RuntimeException('Could not pull supported Minecraft image: '.substr($out,0,600));
             worker_progress(80,'Starting Minecraft container');
             worker_docker_run($id,$path,$meta,$meta['image']);
+        } elseif ($opts['edition']==='bedrock' && PHP_OS_FAMILY==='Windows') {
+            $installed=windows_bedrock_install($path,$opts+[
+                'bedrock_upload_id'=>$post['bedrock_upload_id']??'',
+                'bedrock_upload_sha'=>$post['bedrock_upload_sha']??'',
+                'bedrock_upload_name'=>$post['bedrock_upload_name']??''
+            ]);
+            $meta['version']=$installed['version'];
+            $meta['sha256']=$installed['sha256'];
+            $meta['jar']='';
+            $meta['image']='';
         } else {
             if (!is_array($artifact)) throw new RuntimeException('Java server metadata was not resolved.');
             worker_download($artifact,$path.'/server.jar');
@@ -534,16 +552,22 @@ function worker_native_spawn(string $id,string $path,array $meta,array &$native)
         if ($heap<512 || $heap>32768) throw new RuntimeException('Invalid Java heap.');
         $cmd=worker_native_java_command($id,$path,$meta,$java,$jar);
     } else {
-        if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Bedrock native is only supported on compatible Linux servers.');
-        $binary=$path.'/bedrock_server';
-        if (!is_file($binary)||!is_executable($binary)) throw new RuntimeException('Install the official Bedrock Linux server in the registered folder first.');
+        if (PHP_OS_FAMILY==='Windows') {
+            $binary=$path.'/bedrock_server.exe';
+            if (!is_file($binary)||windows_executable_architecture($binary)!=='x64')
+                throw new RuntimeException('Verified native Windows Bedrock executable not found.');
+        } elseif (PHP_OS_FAMILY==='Linux') {
+            $binary=$path.'/bedrock_server';
+            if (!is_file($binary)||!is_executable($binary))
+                throw new RuntimeException('Install the official Bedrock Linux server first.');
+        } else throw new RuntimeException('Unsupported native Bedrock platform.');
         $cmd=[$binary];
     }
     $logDir=$path.'/logs';
     if (!is_dir($logDir) && !mkdir($logDir,0700,true)) throw new RuntimeException('Cannot create log directory.');
     $log=$logDir.'/mcmanager-console.log';
     $env=null;
-    if ($edition==='bedrock') {
+    if ($edition==='bedrock' && PHP_OS_FAMILY==='Linux') {
         $env=$_ENV+['LD_LIBRARY_PATH'=>$path];
     }
     $spec=[0=>['pipe','r'],1=>['file',$log,'a'],2=>['file',$log,'a']];
@@ -774,6 +798,8 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
     if ($op==='update') {
         if (!empty($meta['imported'])) throw new RuntimeException('Automatic updates are restricted to mcmanager-created servers. Import updates must be performed using their original installer.');
         if ($mode==='native') {
+            if (($meta['edition']??'java')==='bedrock')
+                throw new RuntimeException('Native Bedrock binary updates are not yet implemented. No server files were changed.');
             if ($state!=='stopped') throw new RuntimeException('Stop the native server before updating.');
             $artifact=worker_latest((string)$meta['software'],(string)($params['version']??'latest'));
             $binary=worker_choose_java((string)$artifact['version']);
