@@ -142,7 +142,7 @@ def zip_web(files: dict[str, bytes], out: Path) -> Path:
             raise RuntimeError("Missing Windows service packaging source: " + name)
         windows[name] = path_source.read_bytes()
     content = {**files, **windows}
-    path = out / f"mcmanager-web-{package_version()}.zip"
+    path = out / f"mcconfig_Manager-web-{package_version()}.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name, body in sorted(content.items()):
             entry = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
@@ -182,7 +182,7 @@ def spk(files: dict[str, bytes], out: Path) -> Path:
     }
     for name in SCRIPTS:
         outer["scripts/" + name] = ((PACK / "scripts" / name).read_bytes().replace(b"\r\n", b"\n"), 0o755)
-    path = out / f"mcmanager-DSM7-{package_version()}.spk"
+    path = out / f"mcconfig_Manager-DSM7-{package_version()}.spk"
     with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as archive:
         for name in ("INFO", "package.tgz"):
             body, mode = outer[name]

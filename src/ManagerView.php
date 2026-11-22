@@ -24,7 +24,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       'Windows Service active: '.h($workerInfo['service_name']??'mcmanager-worker'):
       'Local development worker is running; install the Windows Service for automatic startup and crash recovery.' ?></p>
   <?php elseif ($platform==='dsm' && !$dockerAvailable): ?>
-    <p class="hint">The worker has no permanent Docker access. Use <strong>Install a Bedrock Edition server — one-time DSM authorization</strong> or the existing-container approval panel below. Image download, creation and start each require fresh DSM administrator authorization; nothing is stored.</p>
+    <p class="hint">The worker has no permanent Docker access. Open <strong>Create a Minecraft server</strong> and select <strong>Bedrock Edition</strong> for the one-step DSM authorization wizard, or use the existing-container approval panel below. Image download, creation and start each require fresh DSM administrator authorization; nothing is stored.</p>
   <?php endif; ?>
   <details class="mc-worker-tools">
     <summary>Diagnostics and server discovery</summary>
@@ -81,8 +81,6 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 
 <?php if ($platform==='dsm'): ?>
-<?php require __DIR__.'/BedrockWizardView.php'; ?>
-
 <details id="mc-dsm-on-demand" class="mc-feature-group" <?= is_array($dsmReport)||!empty($_GET['dsm_server'])?'open':'' ?>>
   <summary>Advanced: manual Container Manager actions</summary>
   <p class="hint">Use a DSM administrator account for <strong>one operation only</strong>. Credentials and the temporary DSM session are used in this HTTPS request, then discarded; the adapter attempts DSM logout even when an operation fails. The mcconfig service account keeps its normal restricted permissions.</p>
@@ -507,11 +505,25 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 
 
-<details id="mc-create-server" class="mc-feature-group">
+<details id="mc-create-server" class="mc-feature-group" <?= $platform==='dsm'&&!empty($_GET['resume_bedrock'])?'open':'' ?>>
 <summary>Create a Minecraft server</summary>
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
+  <?php if ($platform==='dsm'):
+    $resumeBedrock=isset($_GET['resume_bedrock'])&&
+      is_string($_GET['resume_bedrock'])&&preg_match('/^[a-f0-9]{12}$/D',$_GET['resume_bedrock']);
+  ?>
+    <div class="mc-dsm-edition-picker">
+      <label for="mc-dsm-new-server-edition">Minecraft edition</label>
+      <select id="mc-dsm-new-server-edition" data-dsm-new-server-edition>
+        <option value="java" <?= $resumeBedrock?'':'selected' ?>>Java Edition — Vanilla / Paper</option>
+        <option value="bedrock" <?= $resumeBedrock?'selected':'' ?>>Bedrock Edition — Container Manager</option>
+      </select>
+      <p class="hint">Bedrock uses the one-step DSM installer with one-time administrator authorization. Permanent Docker socket access is not required.</p>
+    </div>
+    <div class="mc-dsm-edition-panel" data-dsm-java-install <?= $resumeBedrock?'hidden':'' ?>>
+  <?php endif; ?>
   <?php if ($platform==='dsm' && !$dockerAvailable):
     $dockerGuide=manager_docker_permission_advice($dockerAccess);
     $dockerUser=(string)($dockerAccess['user']??'mcconfig');
@@ -519,6 +531,8 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     if (!preg_match('~^/?[A-Za-z0-9_./-]+$~D',$dockerBin)) $dockerBin='docker';
     if (!preg_match('/^[A-Za-z0-9_@.-]+$/D',$dockerUser)) $dockerUser='mcconfig';
   ?>
+    <details class="mc-dsm-legacy-permissions">
+      <summary>Advanced: legacy Docker socket permissions (not required for Bedrock)</summary>
     <div class="mc-docker-warning alert warning">
       <strong>Worker-based container installation unavailable: no Docker socket permission</strong>
       <p><?= h($dockerAccess['message']) ?></p>
@@ -563,17 +577,18 @@ chmod 0660 /var/run/docker.sock
 ls -l /var/run/docker.sock</pre>
           <p class="hint">If a group already exists without the service user, stop and review it instead of replacing its membership. After the task completes, restart mcconfig in Package Center and refresh its Docker status. This grants persistent account membership; the socket group ownership can reset after Container Manager restarts. If you need access restricted to each individual Docker action instead, that requires a separate, tightly controlled privileged broker—not a root-password field in the website.</p>
         </details>
-        <p class="hint"><strong>Security:</strong> Docker socket access grants root-equivalent control over the NAS. mcmanager will never change socket ownership or permissions automatically. Never use <code>chmod 666</code> or an unauthenticated network Docker endpoint. Container Manager/DSM updates can reset socket access; recheck after upgrades. Never enter NAS administrator or root credentials into the mcmanager web form.</p>
+        <p class="hint"><strong>Security:</strong> Docker socket access grants root-equivalent control over the NAS. mcmanager will never change socket ownership or permissions automatically. Never use <code>chmod 666</code> or an unauthenticated network Docker endpoint. Container Manager/DSM updates can reset socket access; recheck after upgrades. Only enter DSM administrator credentials in the one-time HTTPS authorization form; never enter the NAS root password or grant the web worker permanent administrator access.</p>
         <p class="hint"><a href="https://docs.docker.com/engine/install/linux-postinstall/" target="_blank" rel="noopener noreferrer">Docker documentation: socket group privileges</a></p>
       </details>
-      <p class="hint">Native Java Vanilla/Paper remains available. Bedrock can now use the separate temporary DSM authorization installer above; this ongoing worker-access guide is optional, not required for the staged Bedrock workflow.</p>
+      <p class="hint">Native Java Vanilla/Paper remains available. Bedrock uses the one-time DSM authorization installer selected above; ongoing worker access to the Docker socket is optional and not required.</p>
     </div>
+    </details>
   <?php endif; ?>
   <form method="post" enctype="multipart/form-data" class="manager-install">
     <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install">
     <div class="form-row">
       <label>Server name <input name="name" placeholder="Family server" maxlength="64" required></label>
-      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||$dockerAvailable||($platform==='linux'&&mc_linux_bedrock_supported())): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
+      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||($platform==='linux'&&mc_linux_bedrock_supported())): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
     </div>
     <div class="form-row">
       <div class="manager-software-field" data-software-help>
@@ -587,7 +602,7 @@ ls -l /var/run/docker.sock</pre>
             <option value="spigot">Spigot (container)</option><option value="bukkit">CraftBukkit (container)</option>
             <option value="fabric">Fabric (container)</option><option value="forge">Forge (container)</option>
             <option value="neoforge">NeoForge (container)</option><option value="purpur">Purpur (container)</option>
-            <option value="folia">Folia (container)</option><option value="bedrock">Bedrock Dedicated Server</option>
+            <option value="folia">Folia (container)</option>
             <?php endif; ?>
           </select>
           <button type="button" class="manager-software-info" data-software-info
@@ -651,7 +666,13 @@ ls -l /var/run/docker.sock</pre>
       I accept the Minecraft <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">End User License Agreement</a>.</label>
     <button class="primary" <?= !$workerOnline?'disabled':'' ?>>Create server</button>
   </form>
-  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally<?php if (mc_linux_bedrock_supported()): ?> and the official Ubuntu Bedrock Dedicated Server without Docker<?php else: ?>. Native Bedrock requires an officially supported Ubuntu 22.04+ x86-64 host<?php endif; ?>.<?php else: ?>DSM native Vanilla/Paper and the dedicated Bedrock Container Manager wizard are independent.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
+  <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally<?php if (mc_linux_bedrock_supported()): ?> and the official Ubuntu Bedrock Dedicated Server without Docker<?php else: ?>. Native Bedrock requires an officially supported Ubuntu 22.04+ x86-64 host<?php endif; ?>.<?php else: ?>DSM Java Vanilla/Paper installs natively. Select Bedrock above for its separate one-time Container Manager authorization wizard.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
+  <?php if ($platform==='dsm'): ?>
+    </div>
+    <div class="mc-dsm-edition-panel" data-dsm-bedrock-install <?= $resumeBedrock?'':'hidden' ?>>
+      <?php require __DIR__.'/BedrockWizardView.php'; ?>
+    </div>
+  <?php endif; ?>
 </section>
 
 </details>

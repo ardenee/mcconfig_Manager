@@ -2,7 +2,7 @@
 
 **mcconfig Manager** is a web-based manager for Minecraft Java Edition and Bedrock Dedicated Servers running on the **same Windows PC, Linux machine or Synology NAS** as mcconfig Manager. It provides a single interface to install, configure, monitor and control supported local Minecraft servers.
 
-The project retains the original **mcconfig Manager** Synology package identifier for upgrade compatibility. The GitHub repository is **[ardenee/mcconfig_Manager](https://github.com/ardenee/mcconfig_Manager)**. The application is written in PHP and does not require a database.
+The project retains the original **mcconfig** Synology package identifier for upgrade compatibility. The GitHub repository is **[ardenee/mcconfig_Manager](https://github.com/ardenee/mcconfig_Manager)**. The application is written in PHP and does not require a database.
 
 ## Features
 
@@ -30,7 +30,7 @@ mcconfig Manager manages **servers on its own host only**. Windows, Linux and DS
 
 Java servers need a compatible Java runtime; **Bedrock does not require Java**. Additional Java distributions such as Spigot, Fabric, Forge, NeoForge, Purpur and Folia can be registered or managed where supported, but are **not all automatically installed**.
 
-**Windows** includes an optional Windows Service for worker startup, recovery and opt-in server restart following a reboot. **Linux** uses a local PHP worker that can be supervised by systemd. **DSM** uses Web Station and offers one-time administrator authorization for Container Manager operations; credentials and DSM sessions are not saved.
+**Windows** includes an optional Windows Service for worker startup, recovery and opt-in server restart following a reboot. **Linux** uses a local PHP worker that can be supervised by systemd. **DSM** uses Web Station. In **Server Manager → Create a Minecraft server → Minecraft edition**, select **Java Edition** or **Bedrock Edition**. Bedrock opens an integrated one-step Container Manager wizard, even when the restricted worker has no Docker socket permission. The wizard uses one-time DSM administrator authorization over HTTPS; credentials and DSM sessions are not saved.
 
 ## Requirements
 

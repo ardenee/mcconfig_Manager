@@ -252,8 +252,30 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+// On DSM the one-time Bedrock installer is an equal choice in Create Server.
+// It never depends on background-worker Docker socket permissions.
+document.addEventListener('DOMContentLoaded', () => {
+  const edition = document.querySelector('[data-dsm-new-server-edition]');
+  const javaPanel = document.querySelector('[data-dsm-java-install]');
+  const bedrockPanel = document.querySelector('[data-dsm-bedrock-install]');
+  const section = document.getElementById('mc-create-server');
+  if (!edition || !javaPanel || !bedrockPanel || !section) return;
+  const sync = () => {
+    const bedrock = edition.value === 'bedrock';
+    javaPanel.hidden = bedrock;
+    bedrockPanel.hidden = !bedrock;
+  };
+  if (window.location.hash === '#mc-create-bedrock' ||
+      new URLSearchParams(window.location.search).has('resume_bedrock')) {
+    edition.value = 'bedrock';
+    section.open = true;
+  }
+  edition.addEventListener('change', sync);
+  sync();
+});
+
 // Keep edition, server implementation and deployment consistent in Create Server.
-// A Bedrock selection always requires the Docker container deployment.
+// Bedrock within this generic form follows the supported native/container deployment.
 document.addEventListener('DOMContentLoaded', () => {
   const form = document.querySelector('form.manager-install');
   if (!form) return;
