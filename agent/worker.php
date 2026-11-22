@@ -268,7 +268,11 @@ function worker_java_version(string $binary): array {
     if (preg_match('/version "(\d+)(?:\.(\d+))?/',$raw,$m)) {
         $major=(int)$m[1]===1?(int)($m[2]??0):(int)$m[1];
     } elseif (preg_match('/(?:openjdk|java) (\d+)(?:[.\s]|$)/i',$raw,$m)) $major=(int)$m[1];
-    return ['path'=>$binary,'major'=>$major,'raw'=>substr($raw,0,350),'code'=>$exit];
+    $full='';
+    if (preg_match('/(?:openjdk|java)\s+version\s+"([^"]+)"/i',$raw,$match))
+        $full=substr($match[1],0,80);
+    return ['path'=>$binary,'major'=>$major,'version'=>$full,
+        'raw'=>substr($raw,0,350),'code'=>$exit];
 }
 function worker_required_java(string $version): int {
     if (preg_match('/^(\d+)\./',$version,$m) && (int)$m[1]>=26) return 25;
@@ -281,25 +285,100 @@ function worker_required_java(string $version): int {
     }
     return 0;
 }
-function worker_diagnostics(): array {
-    $ramTotal=0;$ramFree=0;
-    if (is_file('/proc/meminfo')) {
-        foreach(file('/proc/meminfo')?:[] as $line) {
-            if (preg_match('/^(MemTotal|MemAvailable):\s+(\d+)/',$line,$m)) {
-                if ($m[1]==='MemTotal') $ramTotal=(int)$m[2]*1024;
-                else $ramFree=(int)$m[2]*1024;
-            }
-        }
+/** Parse Linux MemTotal/MemAvailable in KiB without assuming DSM-specific paths. */
+function worker_linux_memory_values(string $meminfo): array {
+    $entries=[];
+    foreach(preg_split('/\r\n|\n|\r/',$meminfo)?:[] as $line) {
+        if (preg_match('/^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SReclaimable):\s+(\d+)\s+kB$/',$line,$m))
+            $entries[$m[1]]=(int)$m[2]*1024;
     }
-    $javas=[];$binary=worker_bin('java');
+    $total=$entries['MemTotal']??0;
+    $available=$entries['MemAvailable']??(
+        ($entries['MemFree']??0)+($entries['Buffers']??0)+
+        ($entries['Cached']??0)+($entries['SReclaimable']??0)
+    );
+    if ($total<=0)return ['ram_total'=>0,'ram_available'=>0];
+    return ['ram_total'=>$total,'ram_available'=>min($total,max(0,$available))];
+}
+/** Inspect local physical host memory and CPU; no DSM/Docker command on Windows. */
+function worker_local_hardware(): array {
+    $info=['ram_total'=>0,'ram_available'=>0,'cpu_model'=>'','os_name'=>''];
+    if (PHP_OS_FAMILY==='Windows') {
+        // Win32_OperatingSystem reports TotalVisibleMemorySize and
+        // FreePhysicalMemory in KiB. Use Windows PowerShell/CIM, not /proc.
+        $powershell=worker_bin('powershell');
+        if ($powershell===null)return $info;
+        $command=<<<'PS'
+$os=Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+$cpu=Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+[Console]::Out.WriteLine(('{0}|{1}|{2}|{3}' -f [long]$os.TotalVisibleMemorySize,[long]$os.FreePhysicalMemory,[string]$cpu.Name,[string]$os.Caption))
+PS;
+        try {
+            [$code,$output]=worker_exec([$powershell,'-NoProfile','-NonInteractive',
+                '-Command',$command],1024);
+            if ($code!==0)return $info;
+            if (preg_match('/^(\d+)\|(\d+)\|([^\r\n|]{0,150})\|([^\r\n|]{0,150})$/m',trim($output),$m)) {
+                $total=(int)$m[1]*1024;
+                $available=(int)$m[2]*1024;
+                if ($total>0 && $available>=0 && $available<=$total) {
+                    $info['ram_total']=$total;
+                    $info['ram_available']=$available;
+                }
+                $info['cpu_model']=trim($m[3]);
+                $info['os_name']=trim($m[4]);
+            }
+        } catch(Throwable) { /* Missing WMI service: report unknown, never guess. */ }
+        return $info;
+    }
+    if (PHP_OS_FAMILY==='Linux') {
+        $mem=@file_get_contents('/proc/meminfo');
+        if (is_string($mem))$info=array_replace($info,worker_linux_memory_values($mem));
+        $cpu=@file_get_contents('/proc/cpuinfo');
+        if (is_string($cpu) &&
+            preg_match('/^(?:model name|Hardware|Processor|Model)\s*:\s*(.+)$/mi',$cpu,$m))
+            $info['cpu_model']=trim(substr($m[1],0,150));
+        $os=@file_get_contents('/etc/os-release');
+        if (is_string($os) && preg_match('/^PRETTY_NAME=(?:"([^"]+)"|(.+))$/m',$os,$m))
+            $info['os_name']=trim((string)($m[1]!==''?$m[1]:($m[2]??'')));
+    }
+    return $info;
+}
+function worker_diagnostics(): array {
+    $platform=mc_platform();
+    $hardware=worker_local_hardware();
+    $javas=[];$seen=[];
+    $addJava=static function(string $path,bool $managed=false)use(&$javas,&$seen):void {
+        $real=realpath($path);
+        $key=strtolower(str_replace('\\','/',$real?:$path));
+        if (isset($seen[$key]))return;
+        $seen[$key]=true;
+        $javas[]=worker_java_version($path)+['managed'=>$managed];
+    };
     foreach([17,21,25] as $major) {
         $managed=worker_managed_java($major);
-        if ($managed) $javas[]=worker_java_version($managed)+['managed'=>true];
+        if ($managed)$addJava($managed,true);
     }
-    if ($binary) $javas[]=worker_java_version($binary);
-    foreach(['/var/packages/Java8/target/j2sdk-image/bin/java','/usr/local/java/bin/java','/opt/jdk-25/bin/java'] as $j) {
-        if (is_file($j)&&is_executable($j)&&$j!==$binary) $javas[]=worker_java_version($j);
+    $binary=worker_bin('java');
+    if ($binary)$addJava($binary);
+    if ($platform==='dsm') {
+        foreach(['/var/packages/Java8/target/j2sdk-image/bin/java',
+            '/usr/local/java/bin/java','/opt/jdk-25/bin/java'] as $j) {
+            if (is_file($j)&&is_executable($j))$addJava($j);
+        }
     }
+    $persistent=PHP_OS_FAMILY==='Linux'&&worker_bin('setsid')!==null;
+    $health=[
+        'php'=>PHP_VERSION,'platform'=>$platform,
+        'os'=>PHP_OS_FAMILY,'os_name'=>$hardware['os_name'],
+        'architecture'=>php_uname('m'),'cpu_model'=>$hardware['cpu_model'],
+        'ram_total'=>$hardware['ram_total'],'ram_available'=>$hardware['ram_available'],
+        'free_storage'=>disk_free_space(worker_root()),
+        'java'=>$javas,'instances_root'=>worker_root(),
+        'native_supported'=>true,'persistent_native_supported'=>$persistent,
+        'native_supervision'=>$persistent?'detached':'worker',
+    ];
+    if ($platform!=='dsm')return $health;
+    // DSM only: never probe Docker on ordinary Windows or Linux installations.
     $docker=worker_bin('docker');
     $socket='/var/run/docker.sock';
     $socketStat=@stat($socket);
@@ -317,7 +396,7 @@ function worker_diagnostics(): array {
     $dockerError='';
     if ($docker) {
         [$code,$out]=worker_exec([$docker,'version','--format','{{.Server.Version}}'],1000);
-        if ($code===0) $dockerStatus='available: '.$out;
+        if ($code===0)$dockerStatus='available: '.$out;
         elseif (stripos($out,'permission denied')!==false) {
             $dockerStatus='Permission denied to Container Manager Docker socket';
             $dockerError=$out;
@@ -329,16 +408,15 @@ function worker_diagnostics(): array {
             $dockerError=$out;
         }
     }
-    return ['php'=>PHP_VERSION,'os'=>PHP_OS_FAMILY,'architecture'=>php_uname('m'),
-      'ram_total'=>$ramTotal,'ram_available'=>$ramFree,'free_storage'=>disk_free_space(worker_root()),
-      'java'=>$javas,'docker'=>$dockerStatus,'instances_root'=>worker_root(),
-      'docker_cli'=>$docker??'not found','docker_socket'=>$sockDetails,
-      'docker_worker_user'=>$workerUser,'docker_error'=>substr($dockerError,0,500),
-      'container_manager_installed'=>is_dir('/var/packages/ContainerManager'),
-      'container_supported'=>$docker && str_starts_with($dockerStatus,'available'),
-      'native_supported'=>true,
-      'persistent_native_supported'=>PHP_OS_FAMILY==='Linux' && worker_bin('setsid')!==null];
+    return $health+[
+        'docker'=>$dockerStatus,'docker_cli'=>$docker??'not found',
+        'docker_socket'=>$sockDetails,'docker_worker_user'=>$workerUser,
+        'docker_error'=>substr($dockerError,0,500),
+        'container_manager_installed'=>is_dir('/var/packages/ContainerManager'),
+        'container_supported'=>$docker && str_starts_with($dockerStatus,'available'),
+    ];
 }
+
 function worker_backup(string $id,string $path,string $reason='manual'): string {
     return worker_backup_create($id,$path,$reason);
 }

@@ -810,9 +810,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.20">
-<script src="assets/app.js?v=0.5.20" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.20" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.21">
+<script src="assets/app.js?v=0.5.21" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.21" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>
@@ -870,20 +870,21 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <form method="post" data-confirm="Remove this server from mcconfig? Minecraft files will be left alone."><?php hidden_csrf(); ?><input type="hidden" name="action" value="remove_server"><input type="hidden" name="server_id" value="<?= h($id) ?>"><button class="subtle danger-text">Remove</button></form></div>
     <?php endforeach; ?>
     </section>
-    <?php $settingsDocker=manager_docker_capability(); ?>
+    <?php $settingsPlatform=mc_platform();
+      $settingsDocker=$settingsPlatform==='dsm'?manager_docker_capability():['available'=>false]; ?>
     <section class="panel"><h2>Register an existing Minecraft server</h2>
       <p class="hint">This form only registers an existing folder. It does not download Minecraft, create a JAR or generate server.properties. For a new installation, use <a href="?tab=manager">Server Manager → Install a new Minecraft server</a>.</p>
       <form method="post"><?php hidden_csrf(); ?><input type="hidden" name="action" value="add_server">
         <label>Display name <input name="name" placeholder="Minecraft" maxlength="64" required></label>
         <label>Edition <select name="edition"><option value="java">Java (Vanilla, CraftBukkit, Spigot, Paper, Fabric, etc.)</option><option value="bedrock">Bedrock Dedicated Server</option></select></label>
         <label>Deployment <select name="deployment"><option value="native">Native / installed on host</option><?php if (!empty($settingsDocker['available'])): ?><option value="container">Container with host bind-mounted data</option><?php endif; ?></select></label>
-        <?php if (empty($settingsDocker['available'])): ?><p class="hint">Container registration is disabled: <?= h($settingsDocker['message']) ?>. Native Java server registration remains available.</p><?php endif; ?>
+        <?php if ($settingsPlatform==='dsm' && empty($settingsDocker['available'])): ?><p class="hint">DSM container registration is unavailable: <?= h($settingsDocker['message']??'Docker worker unavailable') ?>. Native server registration remains available.</p><?php endif; ?>
         <label>Server implementation <select name="software"><option value="vanilla">Vanilla Java</option><option value="paper">Paper Java</option><option value="spigot">Spigot Java</option><option value="bukkit">CraftBukkit Java</option><option value="fabric">Fabric Java</option><option value="forge">Forge Java</option><option value="neoforge">NeoForge Java</option><option value="bedrock">Bedrock</option></select></label>
-        <label>Existing server directory on NAS (must exist) <input name="path" placeholder="/volume1/docker/minecraft/data or /srv/minecraft" required></label>
+        <label>Existing local server directory (must exist) <input name="path" placeholder="<?= h($settingsPlatform==='windows'?'C:\\Minecraft\\Server':($settingsPlatform==='dsm'?'/volume1/minecraft':'/srv/minecraft')) ?>" required></label>
         <label>Worlds folder (Bedrock only) <input name="worlds_path" placeholder="/volume1/docker/minecraft-bedrock/worlds"></label>
         <label>JAR filename (Java only, optional) <input name="jar" placeholder="server.jar"></label>
-        <label>Existing Docker container name (container adoption only) <input name="container_name" placeholder="minecraft-paper"></label>
-        <p class="hint">Enter NAS host paths, not /data or other paths inside the container. Java containers usually mount a host folder to /data. Bedrock may use separate config and worlds mounts. The PHP service account needs appropriate ACLs.</p>
+        <?php if ($settingsPlatform==='dsm'): ?><label>Existing Docker container name (container adoption only) <input name="container_name" placeholder="minecraft-paper"></label><?php endif; ?>
+        <p class="hint"><?php if ($settingsPlatform==='dsm'): ?>For containers, enter DSM host paths rather than paths such as /data inside the container.<?php else: ?>Only local filesystem paths on this computer are supported. No remote server access is provided.<?php endif; ?> The PHP worker needs permission to read and write imported folders.</p>
         <button class="primary">Register existing server</button>
       </form>
     </section>
@@ -901,7 +902,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
       <div class="status-line"><span>PHP session support</span><strong><?= extension_loaded('session') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>PHP ZIP support</span><strong><?= extension_loaded('zip') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>PHP zlib support</span><strong><?= extension_loaded('zlib') ? 'Enabled' : 'Missing' ?></strong></div>
-      <div class="status-line"><span>PHP curl support (one-time DSM authorization)</span><strong><?= extension_loaded('curl') ? 'Enabled' : 'Missing' ?></strong></div>
+      <div class="status-line"><span>PHP cURL support<?php if (mc_platform()==='dsm'): ?> (one-time DSM authorization)<?php endif; ?></span><strong><?= extension_loaded('curl') ? 'Enabled' : 'Missing' ?></strong></div>
       <div class="status-line"><span>open_basedir</span><code class="settings-path"><?= h(ini_get('open_basedir') ?: 'Not restricted') ?></code></div>
       <div class="status-line"><span>Upload maximum</span><strong><?= h(ini_get('upload_max_filesize')) ?></strong></div>
       <div class="status-line"><span>Post maximum</span><strong><?= h(ini_get('post_max_size')) ?></strong></div>

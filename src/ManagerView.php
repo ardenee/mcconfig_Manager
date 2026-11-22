@@ -1,8 +1,8 @@
 <?php
 $workerInfo=manager_heartbeat();
 $workerOnline=!empty($workerInfo['online']);
-$dockerAccess=manager_docker_capability();
 $platform=mc_platform();
+$dockerAccess=$platform==='dsm'?manager_docker_capability():['available'=>false];
 $dockerAvailable=$platform==='dsm'&&!empty($dockerAccess['available']);
 $recent=manager_recent_jobs();
 $requestedJob=$_GET['job']??'';
@@ -18,7 +18,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     </div>
   </div>
   <?php if (!$workerOnline): ?>
-    <div class="alert warning">The management service is offline; status information and server controls may not be available. Start mcconfig in DSM Package Center.</div>
+    <div class="alert warning">The management service is offline; status information and server controls may not be available. Start the local mcmanager worker to enable installation and server control.</div>
   <?php elseif ($platform==='dsm' && !$dockerAvailable): ?>
     <p class="hint">The worker has no permanent Docker access. Use <strong>Install a Bedrock Edition server — one-time DSM authorization</strong> or the existing-container approval panel below. Image download, creation and start each require fresh DSM administrator authorization; nothing is stored.</p>
   <?php endif; ?>
@@ -277,7 +277,7 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
           </label>
           <input type="hidden" name="netty_workdir" value="0">
           <label class="check"><input type="checkbox" name="netty_workdir" value="1" <?= !array_key_exists('netty_workdir',$row)||!empty($row['netty_workdir'])?'checked':'' ?>>
-            Use a private Netty native-library directory within this server (recommended on DSM when /tmp is noexec)
+            Use a private Netty native-library directory within this server<?php if ($platform==='dsm'): ?> (recommended on DSM when /tmp is noexec)<?php endif; ?>
           </label>
           <button class="subtle" type="submit">Save startup settings</button>
         </form>
@@ -349,31 +349,67 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   <?php endif; ?>
   <?php if (!empty($selectedJob['message'])): ?><div class="alert <?= ($selectedJob['state']??'')==='failed'?'danger':'warning' ?>"><?= h($selectedJob['message']) ?></div><?php endif; ?>
   <?php if (!empty($selectedJob['result']['system'])):
-    $s=$selectedJob['result']['system']; ?>
+    $s=$selectedJob['result']['system'];
+    // Legacy job reports predate platform detection. Interpret those from
+    // their recorded OS, not by the viewer's Docker installation.
+    $diagnosticsPlatform=(string)($s['platform']??(
+        ($s['os']??'')==='Windows'?'windows':$platform
+    ));
+    $diagnosticsDsm=$diagnosticsPlatform==='dsm';
+    $osTitle=(string)($s['os_name']??'');
+    if ($osTitle==='')$osTitle=$diagnosticsPlatform==='dsm'?'Synology DSM':ucfirst($diagnosticsPlatform);
+    $nativeMode=(string)($s['native_supervision']??(
+        !empty($s['persistent_native_supported'])?'detached':'worker'
+    ));
+  ?>
+    <h3>Local host hardware</h3>
     <div class="two-column">
-      <div class="status-line"><span>Host platform</span><strong><?= h(($s['os']??'').' / '.($s['architecture']??'')) ?></strong></div>
-      <div class="status-line"><span>Total RAM</span><strong><?= h(!empty($s['ram_total'])?round($s['ram_total']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
-      <div class="status-line"><span>Available RAM</span><strong><?= h(!empty($s['ram_available'])?round($s['ram_available']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
-      <div class="status-line"><span>Container Manager</span><strong><?= !empty($s['container_manager_installed'])?'Installed':'Not detected' ?></strong></div>
-      <div class="status-line"><span>Docker daemon</span><strong><?= h($s['docker']??'') ?></strong></div>
-      <?php if (isset($s['docker_cli'])): ?>
-        <div class="status-line"><span>Docker CLI executable</span><code><?= h($s['docker_cli']) ?></code></div>
-        <div class="status-line"><span>Docker socket</span><code><?= h($s['docker_socket']??'Unknown') ?></code></div>
-        <div class="status-line"><span>Worker account</span><strong><?= h($s['docker_worker_user']??'Unknown') ?></strong></div>
+      <div class="status-line"><span>Operating system</span><strong><?= h($osTitle) ?></strong></div>
+      <div class="status-line"><span>CPU architecture</span><strong><?= h($s['architecture']??'Unavailable') ?></strong></div>
+      <?php if (!empty($s['cpu_model'])): ?>
+        <div class="status-line"><span>Processor</span><strong><?= h($s['cpu_model']) ?></strong></div>
       <?php endif; ?>
-      <div class="status-line"><span>Persistent native processes</span><strong><?= !empty($s['persistent_native_supported'])?'Supported':'Unavailable — requires Linux setsid -f' ?></strong></div>
+      <div class="status-line"><span>Total RAM</span><strong><?= h(!empty($s['ram_total'])?round($s['ram_total']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
+      <div class="status-line"><span>Available RAM</span><strong><?= h(isset($s['ram_available'])&&$s['ram_total']>0?round($s['ram_available']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
+      <div class="status-line"><span>Available disk</span><strong><?= h(isset($s['free_storage'])&&is_numeric($s['free_storage'])?round($s['free_storage']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
+      <div class="status-line"><span>Native server supervision</span><strong><?php
+        if ($nativeMode==='detached') echo 'Persistent Linux process supervisor';
+        elseif ($diagnosticsPlatform==='windows') echo 'Local Windows worker (must remain running)';
+        else echo 'Local worker (must remain running)';
+      ?></strong></div>
       <div class="status-line"><span>Managed storage</span><code><?= h($s['instances_root']??'') ?></code></div>
-      <div class="status-line"><span>Available disk</span><strong><?= h(isset($s['free_storage'])?round($s['free_storage']/1073741824,1).' GiB':'Unavailable') ?></strong></div>
     </div>
-    <?php if (!empty($s['docker_error'])): ?><p class="hint">Docker error: <?= h($s['docker_error']) ?></p><?php endif; ?>
-    <?php if (empty($s['container_supported'])): ?>
-      <p class="hint">On DSM 7, Container Manager is Docker. It can be running while the unprivileged mcconfig worker lacks socket access. Check the socket owner/group and worker identity; never make Docker's socket publicly accessible or world-writable. Docker daemon access effectively grants host-level privileges.</p>
+    <?php if ($diagnosticsDsm): ?>
+      <h3>Synology DSM Container Manager</h3>
+      <div class="two-column">
+        <div class="status-line"><span>Container Manager</span><strong><?= !empty($s['container_manager_installed'])?'Installed':'Not detected' ?></strong></div>
+        <div class="status-line"><span>Docker daemon</span><strong><?= h($s['docker']??'Not checked') ?></strong></div>
+        <?php if (isset($s['docker_cli'])): ?>
+          <div class="status-line"><span>Docker CLI executable</span><code><?= h($s['docker_cli']) ?></code></div>
+          <div class="status-line"><span>Docker socket</span><code><?= h($s['docker_socket']??'Unknown') ?></code></div>
+          <div class="status-line"><span>Worker account</span><strong><?= h($s['docker_worker_user']??'Unknown') ?></strong></div>
+        <?php endif; ?>
+      </div>
+      <?php if (!empty($s['docker_error'])): ?>
+        <p class="hint">Docker error: <?= h($s['docker_error']) ?></p>
+      <?php endif; ?>
+      <?php if (empty($s['container_supported'])): ?>
+        <p class="hint">On DSM, Container Manager can be running while the restricted mcmanager worker lacks Docker socket access. Check permissions only if Docker-worker integration is required. Temporary DSM authorization remains a separate option; never make Docker's socket world-writable.</p>
+      <?php endif; ?>
     <?php endif; ?>
-    <h3>Detected Java installations</h3>
-    <?php foreach (($s['java']??[]) as $java): ?>
-      <div class="status-line"><span><?= h($java['path']??'') ?></span><strong>Java <?= h($java['major']??'?') ?></strong></div>
+    <h3>Local Java runtimes</h3>
+    <p class="hint">Java Edition needs a compatible Java runtime. Bedrock Dedicated Server does not use Java. Managed Java installations are kept separate from system Java.</p>
+    <?php foreach (($s['java']??[]) as $java):
+      $fullVersion=(string)($java['version']??'');
+      if ($fullVersion==='' && preg_match('/(?:openjdk|java)\s+version\s+"([^"]+)"/i',(string)($java['raw']??''),$match))
+          $fullVersion=$match[1];
+      $validVersion=($java['code']??1)===0 && (int)($java['major']??0)>0;
+    ?>
+      <div class="status-line"><span><code><?= h($java['path']??'') ?></code></span><strong><?= $validVersion?'Java '.h($fullVersion!==''?$fullVersion:$java['major']):'Version unavailable' ?> <?= !empty($java['managed'])?'(mcmanager-managed)':'(system)' ?></strong></div>
     <?php endforeach; ?>
-    <?php if (empty($s['java'])): ?><p class="muted">No Java executable found on the worker's PATH or standard installation paths.</p><?php endif; ?>
+    <?php if (empty($s['java'])): ?>
+      <p class="muted">No Java runtime found. For Java Edition, install a compatible runtime using the Java management controls.</p>
+    <?php endif; ?>
   <?php endif; ?>
   <?php if (!empty($selectedJob['result']['found'])): ?>
     <h3>Discovered servers</h3>
@@ -583,7 +619,7 @@ ls -l /var/run/docker.sock</pre>
       </form>
     </div>
   </div>
-  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. Increase both in the local PHP configuration<?php if ($platform==='dsm'): ?> or DSM Web Station<?php endif; ?> → Script Language Settings → the mcconfig PHP profile if your JRE upload is too large. Java Edition needs a compatible runtime; native Bedrock does not need Java.</p>
+  <p class="hint">Browser upload limit: PHP <?= h(ini_get('upload_max_filesize')) ?> per file / <?= h(ini_get('post_max_size')) ?> per request. <?php if ($platform==='dsm'): ?>For larger JRE uploads, adjust DSM Web Station → Script Language Settings → mcconfig PHP profile.<?php else: ?>For larger JRE uploads, adjust upload_max_filesize and post_max_size in the local PHP configuration.<?php endif; ?> Java Edition needs a compatible runtime; native Bedrock does not need Java.</p>
 </section>
 
 </details>
