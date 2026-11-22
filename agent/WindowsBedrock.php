@@ -93,17 +93,26 @@ function windows_bedrock_download(string $url,string $dest): void {
     $curl=worker_bin('curl');
     if (!$curl) throw new RuntimeException('Windows curl.exe is needed for verified Mojang HTTPS transfers.');
     $command=[
-        $curl,'--fail','--silent','--show-error',
+        $curl,'--fail','--silent','--show-error','--http1.1',
+        // Mojang's CDN can withhold the ZIP body from curl's default
+        // user-agent. A browser-like request was verified against the official
+        // minecraft.net URL on DEV with an immediate HTTP 206 response.
+        '--user-agent','Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        '--referer','https://www.minecraft.net/en-us/download/server/bedrock',
+        '--header','Accept: */*',
         '--proto','=https','--max-redirs','0',
         '--max-filesize','250000000',
-        '--connect-timeout','12','--max-time','240',
-        '--speed-time','25','--speed-limit','512',
+        '--connect-timeout','12','--max-time','480',
+        '--speed-time','60','--speed-limit','64',
         '--output',$dest,'--url',$url
     ];
     [$code,$output]=worker_exec($command,1200);
     if ($code!==0) {
         @unlink($dest);
-        throw new RuntimeException('Official Bedrock download failed (curl exit '.$code.'): '.substr($output,0,450));
+        $reason=$code===28
+            ?'Mojang download stalled or timed out; the archive was not installed. '
+            :'Official Mojang transfer failed. ';
+        throw new RuntimeException($reason.'(curl exit '.$code.'): '.substr($output,0,450));
     }
     $size=is_file($dest)?(int)filesize($dest):0;
     if ($size<1048576||$size>250000000) {

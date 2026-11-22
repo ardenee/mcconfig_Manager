@@ -453,6 +453,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $job=manager_enqueue('adopt',['server'=>$config['servers'][$id]],$id);
             redirect('manager','&job='.$job);
         }
+        if ($action==='manager_retry_failed_bedrock') {
+            if (!manager_online())throw new RuntimeException('Start the local worker before retrying installation.');
+            if (mc_platform()!=='windows')
+                throw new RuntimeException('Windows Bedrock retry is available only on local Windows installations.');
+            $id=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$id]??null;
+            if (!is_array($row) ||
+                ($row['install_state']??'')!=='failed'||
+                ($row['edition']??'')!=='bedrock'||
+                ($row['software']??'')!=='bedrock'||
+                ($row['deployment']??'')!=='native') {
+                throw new RuntimeException('Select a failed locally managed Windows Bedrock installation.');
+            }
+            $expected=rtrim(manager_instances_root(),'/\\').DIRECTORY_SEPARATOR.$id;
+            $path=(string)($row['path']??'');
+            if (str_replace('\\','/',strtolower($path))!==
+                str_replace('\\','/',strtolower($expected))||
+                is_link($path)||is_file($path)||
+                (is_dir($path)&&(scandir($path)?:[])!==['.','..'])) {
+                throw new RuntimeException('The existing server directory contains files or is not mcmanager-owned. No files were removed; inspect the failed installation manually.');
+            }
+            $options=manager_install_input([
+                'name'=>$row['name'],'edition'=>'bedrock','software'=>'bedrock',
+                'deployment'=>'native','version'=>$row['version']??'latest',
+                'port'=>(string)$row['port'],'memory'=>(string)$row['memory'],'eula'=>'1'
+            ]);
+            $config['servers'][$id]['install_state']='pending';
+            save_config($config);
+            $job=manager_enqueue('install',$options+['eula'=>'1','retry_failed'=>true],$id);
+            $_SESSION['server_id']=$id;
+            redirect('manager','&job='.$job);
+        }
         if ($action === 'manager_install') {
             if (!manager_online()) throw new RuntimeException('Local management worker is offline.');
             $options=manager_install_input($_POST);
@@ -778,9 +810,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.19">
-<script src="assets/app.js?v=0.5.19" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.19" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.20">
+<script src="assets/app.js?v=0.5.20" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.20" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

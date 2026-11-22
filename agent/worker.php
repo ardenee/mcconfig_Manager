@@ -344,6 +344,23 @@ function worker_backup(string $id,string $path,string $reason='manual'): string 
 }
 
 /** Worker owns only explicitly registered Minecraft servers. */
+/**
+ * Retry only a never-provisioned, empty Windows Bedrock folder. Never delete
+ * an extracted binary, metadata, world or any other file to make retry work.
+ * The queue request is authenticated and signed by the web administrator.
+ */
+function worker_retry_empty_bedrock_dir(string $path,array $options,array $post): void {
+    if (($post['retry_failed']??false)!==true)return;
+    if (PHP_OS_FAMILY!=='Windows'||($options['edition']??'')!=='bedrock'||
+        ($options['deployment']??'')!=='native'||
+        ($options['software']??'')!=='bedrock') {
+        throw new RuntimeException('Only failed Windows native Bedrock installations can retry a directory.');
+    }
+    if (!is_dir($path)||is_link($path)||
+        (scandir($path)?:[])!==['.','..'] || !@rmdir($path)) {
+        throw new RuntimeException('Existing Bedrock installation folder is not empty. No files were removed; inspect the incomplete installation before retrying.');
+    }
+}
 function worker_install(string $id,array $post,array &$native): array {
     $server=worker_server($id);
     if (($server['install_state']??'')!=='pending') throw new RuntimeException('No pending installation for this server.');
@@ -392,6 +409,8 @@ function worker_install(string $id,array $post,array &$native): array {
     }
     $root=worker_root();
     $path=$root.DIRECTORY_SEPARATOR.$id;
+    if (file_exists($path)||is_link($path))
+        worker_retry_empty_bedrock_dir($path,$opts,$post);
     if (file_exists($path) || is_link($path)) throw new RuntimeException('Server directory already exists.');
     if (!mkdir($path,0700)) throw new RuntimeException('Cannot provision server data directory.');
     $meta=$opts+['manager_id'=>$id,'installed'=>date('c'),'imported'=>false];

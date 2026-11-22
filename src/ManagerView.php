@@ -221,6 +221,16 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <p class="muted">CPU <?= h($state['cpu_percent']??'–') ?><?= isset($state['cpu_percent']) && is_numeric($state['cpu_percent'])?'%':'' ?> · RAM <?= h($state['memory']??(isset($state['memory_mib'])?$state['memory_mib'].' MiB':'Unavailable')) ?></p>
       <?php endif; ?>
       <?php if (($row['install_state']??'')==='failed'): ?>
+        <?php if ($workerOnline && $platform==='windows' &&
+            ($row['edition']??'')==='bedrock' && ($row['deployment']??'')==='native'): ?>
+          <form method="post" class="inline-form">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="manager_retry_failed_bedrock">
+            <input type="hidden" name="server_id" value="<?= h($id) ?>">
+            <button class="primary">Retry Bedrock installation</button>
+          </form>
+          <p class="hint">Retry uses the same managed server entry and requires an empty incomplete installation folder. Existing files are never removed or overwritten.</p>
+        <?php endif; ?>
         <p class="hint">Provisioning failed. Review the job error, install a compatible Java runtime if needed, then create a new server. Partial files or containers may require manual inspection.</p>
         <form method="post" class="inline-form" data-confirm="Unregister this failed server? Partial files or containers will be preserved for inspection.">
           <?php hidden_csrf(); ?>
