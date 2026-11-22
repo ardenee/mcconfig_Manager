@@ -505,24 +505,25 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
 
 
 
-<details id="mc-create-server" class="mc-feature-group" <?= $platform==='dsm'&&!empty($_GET['resume_bedrock'])?'open':'' ?>>
+<details id="mc-create-server" class="mc-feature-group" <?= $platform==='dsm'?'open':'' ?>>
 <summary>Create a Minecraft server</summary>
 <section class="panel spaced">
   <h2>Install a new Minecraft server</h2>
   <p class="muted">Each server gets separate persistent storage, ports, limits and lifecycle controls. A working management service and compatible host software are required.</p>
-  <?php if ($platform==='dsm'):
-    $resumeBedrock=isset($_GET['resume_bedrock'])&&
-      is_string($_GET['resume_bedrock'])&&preg_match('/^[a-f0-9]{12}$/D',$_GET['resume_bedrock']);
-  ?>
-    <div class="mc-dsm-edition-picker">
-      <label for="mc-dsm-new-server-edition">Minecraft edition</label>
-      <select id="mc-dsm-new-server-edition" data-dsm-new-server-edition>
-        <option value="java" <?= $resumeBedrock?'':'selected' ?>>Java Edition — Vanilla / Paper</option>
-        <option value="bedrock" <?= $resumeBedrock?'selected':'' ?>>Bedrock Edition — Container Manager</option>
-      </select>
-      <p class="hint">Bedrock uses the one-step DSM installer with one-time administrator authorization. Permanent Docker socket access is not required.</p>
+  <?php if ($platform==='dsm'): ?>
+    <div class="mc-dsm-create-choices">
+      <strong>Choose Minecraft edition</strong>
+      <div class="mc-dsm-edition-links">
+        <a class="subtle" href="#mc-create-bedrock">Bedrock Edition — Container Manager</a>
+        <a class="subtle" href="#mc-dsm-create-java">Java Edition — Vanilla / Paper</a>
+      </div>
+      <p class="hint">Bedrock uses the one-step DSM installer with temporary administrator authorization. No permanent worker Docker socket permission is required.</p>
     </div>
-    <div class="mc-dsm-edition-panel" data-dsm-java-install <?= $resumeBedrock?'hidden':'' ?>>
+    <div class="mc-dsm-bedrock-always-visible">
+      <?php require __DIR__.'/BedrockWizardView.php'; ?>
+    </div>
+    <details id="mc-dsm-create-java" class="mc-feature-group">
+      <summary>Java Edition — native Vanilla / Paper installer</summary>
   <?php endif; ?>
   <?php if ($platform==='dsm' && !$dockerAvailable):
     $dockerGuide=manager_docker_permission_advice($dockerAccess);
@@ -588,7 +589,11 @@ ls -l /var/run/docker.sock</pre>
     <?php hidden_csrf(); ?><input type="hidden" name="action" value="manager_install">
     <div class="form-row">
       <label>Server name <input name="name" placeholder="Family server" maxlength="64" required></label>
-      <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||($platform==='linux'&&mc_linux_bedrock_supported())): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
+      <?php if ($platform==='dsm'): ?>
+        <input type="hidden" name="edition" value="java">
+      <?php else: ?>
+        <label>Edition <select name="edition"><option value="java">Java Edition</option><?php if ($platform==='windows'||($platform==='linux'&&mc_linux_bedrock_supported())): ?><option value="bedrock">Bedrock Edition</option><?php endif; ?></select></label>
+      <?php endif; ?>
     </div>
     <div class="form-row">
       <div class="manager-software-field" data-software-help>
@@ -668,10 +673,7 @@ ls -l /var/run/docker.sock</pre>
   </form>
   <p class="hint"><?php if ($platform==='windows'): ?>Windows installs Java Vanilla/Paper or the official native Bedrock Dedicated Server locally, without virtualization or Docker. Java uses a compatible managed or existing runtime; Bedrock needs no Java.<?php elseif ($platform==='linux'): ?>Linux installs native Vanilla/Paper Java locally<?php if (mc_linux_bedrock_supported()): ?> and the official Ubuntu Bedrock Dedicated Server without Docker<?php else: ?>. Native Bedrock requires an officially supported Ubuntu 22.04+ x86-64 host<?php endif; ?>.<?php else: ?>DSM Java Vanilla/Paper installs natively. Select Bedrock above for its separate one-time Container Manager authorization wizard.<?php endif; ?> Newly created servers use separate mcmanager-owned folders in default storage or a selected local parent folder; existing files are never overwritten.</p>
   <?php if ($platform==='dsm'): ?>
-    </div>
-    <div class="mc-dsm-edition-panel" data-dsm-bedrock-install <?= $resumeBedrock?'':'hidden' ?>>
-      <?php require __DIR__.'/BedrockWizardView.php'; ?>
-    </div>
+    </details>
   <?php endif; ?>
 </section>
 

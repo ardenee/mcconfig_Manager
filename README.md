@@ -30,7 +30,7 @@ mcconfig Manager manages **servers on its own host only**. Windows, Linux and DS
 
 Java servers need a compatible Java runtime; **Bedrock does not require Java**. Additional Java distributions such as Spigot, Fabric, Forge, NeoForge, Purpur and Folia can be registered or managed where supported, but are **not all automatically installed**.
 
-**Windows** includes an optional Windows Service for worker startup, recovery and opt-in server restart following a reboot. **Linux** uses a local PHP worker that can be supervised by systemd. **DSM** uses Web Station. In **Server Manager → Create a Minecraft server → Minecraft edition**, select **Java Edition** or **Bedrock Edition**. Bedrock opens an integrated one-step Container Manager wizard, even when the restricted worker has no Docker socket permission. The wizard uses one-time DSM administrator authorization over HTTPS; credentials and DSM sessions are not saved.
+**Windows** includes an optional Windows Service for worker startup, recovery and opt-in server restart following a reboot. **Linux** uses a local PHP worker that can be supervised by systemd. **DSM** uses Web Station. In **Server Manager → Create a Minecraft server**, the **Bedrock Edition** installer is displayed directly alongside a separate collapsible **Java Edition** installer. The Bedrock form is rendered by the server itself, even without JavaScript or Docker socket permissions. The wizard uses one-time DSM administrator authorization over HTTPS; credentials and DSM sessions are not saved.
 
 ## Requirements
 

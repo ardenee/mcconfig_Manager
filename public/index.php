@@ -838,8 +838,8 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
 <link rel="stylesheet" href="assets/style.css?v=0.5.27">
-<script src="assets/app.js?v=0.5.27" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.27" defer></script>
+<script src="assets/app.js?v=0.5.27-r2" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.27-r2" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

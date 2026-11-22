@@ -215,11 +215,10 @@ textarea.text-editor{width:100%;min-height:420px;resize:vertical;display:block;m
 .manager-software-close{background:none;border:0;color:#52637c;font-size:12px;text-decoration:underline;margin-left:12px;padding:2px 4px}
 .manager-software-info:focus-visible,.manager-software-close:focus-visible{outline:2px solid #3169cb;outline-offset:2px}
 
-/* DSM edition picker routes directly to the inline one-time Bedrock wizard. */
-.mc-dsm-edition-picker{display:flex;flex-direction:column;gap:7px;max-width:520px;margin:12px 0 18px}
-.mc-dsm-edition-picker label{font-weight:650;font-size:13px}
-.mc-dsm-edition-picker select{max-width:100%;width:100%}
-.mc-dsm-edition-picker .hint{margin:3px 0 0}
-.mc-dsm-edition-panel[hidden]{display:none!important}
+/* DSM Bedrock form is server-rendered and always visible; Java is optional. */
+.mc-dsm-create-choices{margin:12px 0 18px}
+.mc-dsm-edition-links{display:flex;flex-wrap:wrap;gap:9px;margin:9px 0}
+.mc-dsm-create-choices .hint{margin:7px 0 0}
+.mc-dsm-bedrock-always-visible{margin:10px 0 16px}
 .mc-dsm-legacy-permissions{margin:8px 0 16px}
 .mc-dsm-legacy-permissions>summary{cursor:pointer;font-size:12px;color:#556b84}
