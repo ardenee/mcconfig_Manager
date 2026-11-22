@@ -123,7 +123,7 @@ function dsm_wizard_error_help(string $message,string $step): array {
     }
     if (str_contains($s,'mount')||str_contains($s,'verif')) {
         return ['title'=>'Container needs verification',
-            'help'=>'DSM must confirm that the new Bedrock container uses the intended image and the exact /data folder. Check its settings in Container Manager; then choose Retry. The wizard will not start an unverified container.'];
+            'help'=>'Compare the Expected host path with the DSM /data source shown above. If the paths differ, correct the container volume binding in DSM Container Manager before retrying. If they refer to the same folder but PHP cannot resolve the DSM path, check package filesystem permissions, symlink aliases and Web Station open_basedir. Do not remove or recreate the server to troubleshoot this. The wizard will not start an unverified container.'];
     }
     if (str_contains($s,'http')||str_contains($s,'api')||str_contains($s,'connect')) {
         return ['title'=>'Container Manager communication failed',

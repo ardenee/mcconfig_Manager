@@ -112,13 +112,22 @@ function dsm_approval_container_assessment(array $details,array $server,string $
     $sections=[[$details,0]];
     $nameFound=false;$imageFound=false;$mountFound=false;
     $wrongName=false;$wrongImage=false;$wrongMount=false;
+    $mountDiagnostics=[];
     $imagePattern=(($server['edition']??'java')==='bedrock')
         ? '~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD'
         : '~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-server(?::|@|$)~iD';
     $isMatch=function(string $source)use($expected):bool {
         if ($source==='' || (PHP_OS_FAMILY!=='Windows' && $source[0]!=='/'))return false;
         if (rtrim($source,'/')===$expected)return true;
-        return realpath($source)===$expected;
+        // A false realpath may mean a path really differs, but it can also
+        // mean PHP-FPM cannot access the alias within open_basedir.
+        $resolved=@realpath($source);
+        if ($resolved!==false && $resolved===$expected)return true;
+        // Compare actual filesystem identity, not string prefixes or guessed
+        // Synology aliases. Never start against a path that has not been proven.
+        $a=@stat($source);$b=@stat($expected);
+        return is_array($a)&&is_array($b) &&
+            (int)$a['dev']===(int)$b['dev'] && (int)$a['ino']===(int)$b['ino'];
     };
     // Only follow identity/profile wrapper keys. Never traverse environment fields.
     for ($i=0;$i<count($sections) && $i<32;$i++) {
@@ -161,7 +170,16 @@ function dsm_approval_container_assessment(array $details,array $server,string $
                         $mount['host_volume_file']??$mount['host_path']??'');
                 }
                 if (rtrim($destination,'/')!=='/data')continue;
-                if ($isMatch($source))$mountFound=true;else $wrongMount=true;
+                $matched=$isMatch($source);
+                if ($matched)$mountFound=true;else $wrongMount=true;
+                if (count($mountDiagnostics)<6) {
+                    $resolved=$source!==''?@realpath($source):false;
+                    $mountDiagnostics[]=[
+                        'reported'=>$source,
+                        'resolved'=>$resolved!==false?$resolved:null,
+                        'matched'=>$matched
+                    ];
+                }
             }
         }
     }
@@ -170,7 +188,8 @@ function dsm_approval_container_assessment(array $details,array $server,string $
     $mountStatus=$wrongMount?'mismatch':($mountFound?'confirmed':'not reported');
     return [
         'verified'=>$nameFound&&$imageFound&&$mountFound&&!$wrongName&&!$wrongImage&&!$wrongMount,
-        'name'=>$nameStatus,'image'=>$imageStatus,'mount'=>$mountStatus
+        'name'=>$nameStatus,'image'=>$imageStatus,'mount'=>$mountStatus,
+        'expected_path'=>$expected,'mount_details'=>$mountDiagnostics
     ];
 }
 function dsm_approval_container_matches(array $details,array $server,string $name): bool {
@@ -178,9 +197,38 @@ function dsm_approval_container_matches(array $details,array $server,string $nam
 }
 function dsm_approval_container_failure(array $details,array $server,string $name): string {
     $check=dsm_approval_container_assessment($details,$server,$name);
-    // Do not leak Docker inspect content, env values, private paths or credentials.
-    return 'Container verification failed: name '.$check['name'].
+    $message='Container verification failed: name '.$check['name'].
         ', image '.$check['image'].', /data bind mount '.$check['mount'].'.';
+    // Only display known path fields to the already authenticated admin
+    // over HTTPS; never include raw Docker inspect objects (which contain
+    // environment variables/passwords and may contain arbitrary JSON).
+    if ($check['name']==='confirmed' && $check['image']==='confirmed' &&
+        $check['mount']!=='confirmed') {
+        $show=function(?string $path):string {
+            if (!is_string($path)||$path===''||strlen($path)>450||
+                preg_match('~^/[A-Za-z0-9_@.+ /:-]+$~D',$path)!==1) {
+                return '[not accessible or unsupported format]';
+            }
+            return $path;
+        };
+        $message.=' Expected host path: '.$show($check['expected_path']??null).'.';
+        if (empty($check['mount_details'])) {
+            $message.=' DSM returned no recognised /data bind source.';
+        } else {
+            $paths=[];
+            foreach ($check['mount_details'] as $item) {
+                $entry=$show($item['reported']??null);
+                $actual=$item['resolved']??null;
+                if ($actual===null)$entry.=' (PHP cannot resolve this host path)';
+                elseif ($actual!==($item['reported']??null))
+                    $entry.=' (resolves to '.$show($actual).')';
+                $paths[]=$entry;
+            }
+            $message.=' DSM /data source(s): '.implode(' ; ',array_unique($paths)).'.';
+        }
+        $message.=' No changes were made. If these are different directories, correct the volume binding in DSM. If they should be the same folder, review PHP-FPM access and Synology path aliases.';
+    }
+    return $message;
 }
 /**
  * $send callback allows offline simulation. Do not persist or log $password or
