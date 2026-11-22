@@ -128,6 +128,9 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       </div><span data-server-status class="mc-status mc-status--<?= h($health['tone']) ?>" role="status" title="<?= h($health['hint']) ?>"><?= h($status) ?></span></div>
       <div class="mc-primary-actions" data-server-actions>
         <?php if ($dsmOnly): ?>
+          <?php if (dsm_cleanup_eligible($row,(string)$id)): ?>
+            <a class="subtle" href="?tab=manager&amp;resume_bedrock=<?= h($id) ?>#mc-create-bedrock">Resume Bedrock setup</a>
+          <?php endif; ?>
           <a class="subtle" href="?tab=manager&amp;dsm_server=<?= h($id) ?>#mc-dsm-on-demand" data-dsm-open="<?= h($id) ?>" data-dsm-operation="bedrock-verify">Verify / manage container</a>
           <?php if (dsm_cleanup_eligible($row,(string)$id)): ?>
             <a class="subtle danger-text" href="?tab=manager&amp;dsm_server=<?= h($id) ?>#mc-dsm-on-demand" data-dsm-open="<?= h($id) ?>" data-dsm-operation="cleanup">Remove container</a>

@@ -65,53 +65,88 @@ function dsm_approval_container_name(string $name): string {
     }
     return $name;
 }
-function dsm_approval_container_matches(array $details,array $server,string $name): bool {
-    // DSM versions split Docker inspect details and Synology configuration profile.
-    // Never expose raw inspect: container environment can contain passwords.
-    $sections=[$details];
-    foreach(['details','profile','container','info'] as $key) {
-        if (!is_array($details[$key]??null)) continue;
-        $section=$details[$key];
-        $sections[]=$section;
-        foreach(['info','details'] as $nested) {
-            if (is_array($section[$nested]??null)) $sections[]=$section[$nested];
-        }
-    }
+/**
+ * Verify the identity and actual /data bind mount without returning inspect data.
+ * Synology may return Docker inspect details, a DSM profile or both.
+ * Treat conflicting evidence as a failure, even if one section matches.
+ */
+function dsm_approval_container_assessment(array $details,array $server,string $name): array {
     $expected=realpath((string)($server['path']??''));
-    if ($expected===false) return false;
-    $nameOk=false;$imageOk=false;$mountOk=false;
-    foreach($sections as $info) {
-        $actual=$info['Name']??$info['name']??'';
-        if (is_string($actual)&&$actual!=='') {
-            if (ltrim($actual,'/')!==$name) return false;
-            $nameOk=true;
-        }
-        $image=(string)($info['Config']['Image']??$info['image']??
-            $info['ImageName']??$info['image_name']??'');
-        $pattern=(($server['edition']??'java')==='bedrock')
-            ?'~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD'
-            :'~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-server(?::|@|$)~iD';
-        if ($image!=='') {
-            if (preg_match($pattern,$image)) $imageOk=true;
-            elseif (!preg_match('/^(?:sha256:)?[0-9a-f]{64}$/iD',$image)) {
-                // Profile metadata must not override a different actual image.
-                return false;
+    if ($expected===false) {
+        return ['verified'=>false,'name'=>'missing','image'=>'missing','mount'=>'storage unavailable'];
+    }
+    $sections=[[$details,0]];
+    $nameFound=false;$imageFound=false;$mountFound=false;
+    $wrongName=false;$wrongImage=false;$wrongMount=false;
+    $imagePattern=(($server['edition']??'java')==='bedrock')
+        ? '~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-bedrock-server(?::|@|$)~iD'
+        : '~^(?:(?:docker\.io|registry-1\.docker\.io|index\.docker\.io)/)?itzg/minecraft-server(?::|@|$)~iD';
+    $isMatch=function(string $source)use($expected):bool {
+        if ($source==='' || (PHP_OS_FAMILY!=='Windows' && $source[0]!=='/'))return false;
+        if (rtrim($source,'/')===$expected)return true;
+        return realpath($source)===$expected;
+    };
+    // Only follow identity/profile wrapper keys. Never traverse environment fields.
+    for ($i=0;$i<count($sections) && $i<32;$i++) {
+        [$info,$depth]=$sections[$i];
+        if ($depth<4) {
+            foreach(['data','details','profile','container','info'] as $key) {
+                if (is_array($info[$key]??null))$sections[]=[$info[$key],$depth+1];
             }
         }
-        $mounts=$info['Mounts']??$info['mounts']??
-            $info['volumes']??$info['volume_bindings']??[];
-        if (!is_array($mounts))continue;
-        foreach($mounts as $mount) {
-            if (!is_array($mount))continue;
-            $destination=$mount['Destination']??$mount['destination']??
-                $mount['mount_point']??$mount['container_path']??'';
-            $source=$mount['Source']??$mount['source']??
-                $mount['host_volume_file']??$mount['host_path']??'';
-            if ($destination==='/data'&&is_string($source)&&$source!==''&&
-                realpath($source)===$expected) $mountOk=true;
+        foreach(['Name','name'] as $key) {
+            if (!isset($info[$key]) || !is_string($info[$key]) || $info[$key]==='')continue;
+            if (ltrim($info[$key],'/')===$name)$nameFound=true;else $wrongName=true;
+        }
+        $images=[];
+        foreach(['image','ImageName','image_name','image_ref'] as $key) {
+            if (is_string($info[$key]??null))$images[]=$info[$key];
+        }
+        if (is_string($info['Config']['Image']??null))$images[]=$info['Config']['Image'];
+        foreach ($images as $image) {
+            if ($image==='')continue;
+            if (preg_match($imagePattern,$image))$imageFound=true;
+            elseif (!preg_match('/^(?:sha256:)?[0-9a-f]{64}$/iD',$image))$wrongImage=true;
+        }
+        $groups=[];
+        foreach(['Mounts','mounts','volume_bindings','volumes'] as $key) {
+            if (is_array($info[$key]??null))$groups[]=$info[$key];
+        }
+        if (is_array($info['HostConfig']['Mounts']??null))$groups[]=$info['HostConfig']['Mounts'];
+        if (is_array($info['HostConfig']['Binds']??null))$groups[]=$info['HostConfig']['Binds'];
+        foreach($groups as $mounts) {
+            foreach($mounts as $mount) {
+                $source='';$destination='';
+                if (is_string($mount) && preg_match('~^(.+):(/[^:]+)(?::[^:]*)?$~D',$mount,$parts)) {
+                    $source=$parts[1];$destination=$parts[2];
+                } elseif(is_array($mount)) {
+                    $destination=(string)($mount['Destination']??$mount['destination']??
+                        $mount['Target']??$mount['target']??$mount['mount_point']??
+                        $mount['container_path']??'');
+                    $source=(string)($mount['Source']??$mount['source']??
+                        $mount['host_volume_file']??$mount['host_path']??'');
+                }
+                if (rtrim($destination,'/')!=='/data')continue;
+                if ($isMatch($source))$mountFound=true;else $wrongMount=true;
+            }
         }
     }
-    return $nameOk&&$imageOk&&$mountOk;
+    $nameStatus=$wrongName?'mismatch':($nameFound?'confirmed':'not reported');
+    $imageStatus=$wrongImage?'mismatch':($imageFound?'confirmed':'not reported');
+    $mountStatus=$wrongMount?'mismatch':($mountFound?'confirmed':'not reported');
+    return [
+        'verified'=>$nameFound&&$imageFound&&$mountFound&&!$wrongName&&!$wrongImage&&!$wrongMount,
+        'name'=>$nameStatus,'image'=>$imageStatus,'mount'=>$mountStatus
+    ];
+}
+function dsm_approval_container_matches(array $details,array $server,string $name): bool {
+    return dsm_approval_container_assessment($details,$server,$name)['verified'];
+}
+function dsm_approval_container_failure(array $details,array $server,string $name): string {
+    $check=dsm_approval_container_assessment($details,$server,$name);
+    // Do not leak Docker inspect content, env values, private paths or credentials.
+    return 'Container verification failed: name '.$check['name'].
+        ', image '.$check['image'].', /data bind mount '.$check['mount'].'.';
 }
 /**
  * $send callback allows offline simulation. Do not persist or log $password or
@@ -171,7 +206,7 @@ function dsm_approval_once(
                 'method'=>'get','name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
             ]),'Bedrock container verification');
             if (!dsm_approval_container_matches($details,$server,$name)) {
-                throw new RuntimeException('DSM did not confirm the container image and /data bind mount. Nothing was started.');
+                throw new RuntimeException(dsm_approval_container_failure($details,$server,$name).' Nothing was started.');
             }
             return ['operation'=>'bedrock-verify','verified'=>true,'container'=>$name,
                 'message'=>'DSM verified the registered Bedrock container. Approve Start separately when ready.'];
@@ -206,7 +241,7 @@ function dsm_approval_once(
                 'name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
             ]),'Container identity verification');
             if (!dsm_approval_container_matches($details,$server,$name)) {
-                throw new RuntimeException('Container image, name or persistent /data mount does not match. Cleanup was refused.');
+                throw new RuntimeException(dsm_approval_container_failure($details,$server,$name).' Cleanup was refused due to mismatch or missing evidence.');
             }
             $state=strtolower((string)($match['status']??$match['state']??''));
             if (str_contains($state,'running')||str_starts_with($state,'up')) {
@@ -256,7 +291,7 @@ function dsm_approval_once(
             'method'=>'get','name'=>json_encode($name,JSON_UNESCAPED_SLASHES)
         ]),'Container identity verification');
         if (!dsm_approval_container_matches($details,$server,$name)) {
-            throw new RuntimeException('Container image or /data mount could not be verified. No operation was performed.');
+            throw new RuntimeException(dsm_approval_container_failure($details,$server,$name).' Container could not be verified. No operation was performed.');
         }
         dsm_approval_checked($api([
             'api'=>'SYNO.Docker.Container','version'=>'1',

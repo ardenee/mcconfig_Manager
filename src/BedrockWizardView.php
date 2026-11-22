@@ -1,5 +1,8 @@
 <?php
 declare(strict_types=1);
+$resumeId=(string)($_GET['resume_bedrock']??'');
+$resumeServer=is_array($all[$resumeId]??null)&&
+    dsm_cleanup_eligible($all[$resumeId],$resumeId)?$all[$resumeId]:null;
 $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
     && $_SERVER['HTTPS']!=='off' && extension_loaded('curl')
     && in_array(strtolower(php_uname('m')),['x86_64','amd64'],true);
@@ -24,22 +27,25 @@ $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
       <?php endif; ?>
     </div>
   <?php else: ?>
-    <form method="post" action="?tab=manager" data-bedrock-wizard autocomplete="off">
+    <form method="post" action="?tab=manager" data-bedrock-wizard data-wizard-resume-id="<?= $resumeServer?h($resumeId):'' ?>" autocomplete="off">
       <?php hidden_csrf(); ?>
       <input type="hidden" name="action" value="dsm_wizard">
-      <input type="hidden" name="bedrock_id" value="<?= h(bin2hex(random_bytes(6))) ?>">
+      <input type="hidden" name="bedrock_id" value="<?= h($resumeServer?$resumeId:bin2hex(random_bytes(6))) ?>">
+      <?php if ($resumeServer): ?>
+      <div class="alert warning">Resuming the existing Bedrock server <strong><?= h($resumeServer['name']??$resumeId) ?></strong>. No new container or image will be created. The wizard will verify its identity and storage before attempting to start it.</div>
+      <?php endif; ?>
       <div class="mc-wizard-fields">
         <label>Server name
-          <input name="bedrock_name" maxlength="64" required placeholder="My Bedrock Server">
+          <input name="bedrock_name" maxlength="64" required placeholder="My Bedrock Server" value="<?= h($resumeServer['name']??'') ?>" <?= $resumeServer?'readonly':'' ?>>
         </label>
         <details class="mc-wizard-advanced">
           <summary>Port and memory <span class="muted">(defaults usually work)</span></summary>
           <div class="form-row">
             <label>Bedrock UDP port
-              <input name="bedrock_port" type="number" min="1024" max="65535" value="19132" required>
+              <input name="bedrock_port" type="number" min="1024" max="65535" value="<?= h($resumeServer['port']??19132) ?>" required>
             </label>
             <label>Maximum memory (MiB)
-              <input name="bedrock_memory" type="number" min="512" max="32768" value="2048" required>
+              <input name="bedrock_memory" type="number" min="512" max="32768" value="<?= h($resumeServer['memory']??2048) ?>" required>
             </label>
           </div>
         </details>
@@ -59,14 +65,14 @@ $wizardPlatformReady=PHP_OS_FAMILY==='Linux' && !empty($_SERVER['HTTPS'])
           </label>
         </div>
       </div>
-      <label class="check"><input type="checkbox" name="bedrock_eula" value="1" required>
+      <label class="check"><input type="checkbox" name="bedrock_eula" value="1" required <?= $resumeServer?'checked':'' ?>>
         I accept the <a href="https://www.minecraft.net/eula" target="_blank" rel="noopener noreferrer">Minecraft EULA</a>
       </label>
       <label class="check"><input type="checkbox" name="bedrock_autostart" value="1" checked>
         Start the server automatically after installation
       </label>
       <div class="mc-wizard-buttons">
-        <button type="submit" class="primary" data-wizard-install>Install Bedrock server</button>
+        <button type="submit" class="primary" data-wizard-install><?= $resumeServer?'Resume Bedrock setup':'Install Bedrock server' ?></button>
         <button type="button" class="subtle" data-wizard-stop hidden>Stop monitoring</button>
       </div>
       <div class="mc-wizard-progress" data-wizard-progress hidden aria-live="polite">

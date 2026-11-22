@@ -9,6 +9,7 @@ The generic PHP application is the **primary distribution**. The optional DSM 7.
 - **Multiple servers:** independent Java (Vanilla, Paper, Spigot, CraftBukkit, Fabric, Forge, NeoForge, Purpur and Folia) and Bedrock profiles.
 - **Native or Docker:** Manage independent native Java and Minecraft containers. Native Java Vanilla/Paper requires no Docker. On Synology DSM, Bedrock has an on-page installation wizard using temporary DSM administrator authorization, without permanent Docker socket/group permissions. Advanced Docker-worker access remains optional.
 - **Bedrock installation wizard (DSM, experimental):** Enter the server name, optional UDP port and memory limit, DSM administrator credentials and Minecraft EULA acceptance **once**; click **Install Bedrock server**. The wizard automatically checks or downloads the official Bedrock Docker image, monitors the download, creates an isolated persistent /data container, verifies it, and starts it when requested. A compact progress display and in-place Retry show the specific failed step and recovery instructions. Credentials remain only in the browser form during installation and are discarded afterwards; each backend API request logs in and out without saving credentials or granting permanent Docker access. Container Manager's create/image APIs still require real NAS validation.
+- **Bedrock verification recovery (0.5.12):** Verification accepts checked Synology Container Manager profile and Docker inspect bind-mount layouts, but refuses missing or conflicting image, container name or /data paths. Failures report which evidence was absent or conflicting, without exposing credentials or private paths. A failed or interrupted Bedrock wizard can be resumed from the registered server card without downloading the image or creating a duplicate container. Retry explicitly points to a missing DSM password or invalid form input.
 - **Bedrock cleanup and recovery:** manager-created DSM containers have a working one-click link that opens the appropriate temporary DSM authorization controls, including image/mount verification, start/stop and a confirmed **Remove container** operation. Remove container validates the exact managed image, name and /data mount, stops and deletes only the registered Minecraft container, and removes its registry entry. Worlds are preserved unless their deletion is separately opted into and confirmed by typing DELETE FILES; deletion is restricted to the exact managed server folder, never other volumes/servers. If the Docker container/image was already removed in Container Manager, **Forget server entry** removes the obsolete mcmanager entry without touching existing files, images or containers and without requiring DSM credentials. Docker images can be shared and are never removed automatically. The Synology SPK explicitly opens the application using HTTPS port 443.
 - **Temporary DSM authorization:** Container management uses a fixed loopback DSM Container Manager API, HTTPS on the browser, and a new DSM login/logout for each operation. No password, SID or CSRF token is written to application storage or worker jobs. Manual start/stop and diagnostics are available under expandable advanced controls. Other container implementations remain experimental.
 - **Docker GUI-assisted authorization:** DSM Control Panel → Task Scheduler → User-defined script can execute an administrator-reviewed one-time root task to create a dedicated socket-access group and grant the package worker access, without any root password being entered in mcmanager. The sample validates the service account and socket and refuses to reset membership of an existing group. The setup still grants root-equivalent Docker control whenever the socket is accessible; truly per-action temporary privilege would require a separately audited narrow privileged broker. No automated escalation or root credentials are stored.
@@ -42,7 +43,7 @@ Minecraft itself is not bundled.
 ## Generic web hosting installation
 
 1. Build the primary ZIP: python packaging/build.py --format web
-2. Extract dist/mcmanager-web-0.5.11.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
+2. Extract dist/mcmanager-web-0.5.12.zip and set the web host document root to **public/**. Never expose src/, agent/ or var/.
 3. Ensure the web process can write to a **private** var/ or set MCCONFIG_DATA_DIR to an external directory.
 4. Open the site and create the administrator password. Use **Settings > Register an existing Minecraft server** only to attach an existing folder; it does not install Minecraft or create properties. Use **Server Manager > Install a new Minecraft server** to provision a new instance, then install the required Java runtime. The JAR management tab can install a verified native Java server JAR into a registered directory.
 
@@ -66,8 +67,8 @@ Install **Web Station** and **PHP 8.2** through Package Center, then build:
 
 This generates:
 
-- dist/mcmanager-web-0.5.11.zip — generic web deployment
-- dist/mcmanager-DSM7-0.5.11.spk — DSM Package Center manual install
+- dist/mcmanager-web-0.5.12.zip — generic web deployment
+- dist/mcmanager-DSM7-0.5.12.spk — DSM Package Center manual install
 
 The DSM package keeps internal package ID mcconfig and URL alias /mcconfig for upgrades. It registers the PHP 8.2 Web Station profile using backend **11** and enables session, zip, zlib and curl. Package start invokes the private unprivileged PHP CLI worker, if its PHP runtime is available on the NAS.
 

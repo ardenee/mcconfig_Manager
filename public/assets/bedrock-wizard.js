@@ -33,8 +33,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const rows = Array.from(form.querySelectorAll('[data-wizard-step]'));
   const progressValues = [5, 20, 66, 82, 95, 100];
 
-  let phase = 'check';
-  let serverId = '';
+  let phase = form.dataset.wizardResumeId ? 'verify' : 'check';
+  let serverId = form.dataset.wizardResumeId || '';
   let pullTask = '';
   let imageCheckRetries = 0;
   let downloadChecks = 0;
@@ -57,6 +57,7 @@ document.addEventListener('DOMContentLoaded', () => {
     busy = locked;
     install.disabled = locked;
     retry.disabled = locked;
+    retry.textContent = locked ? 'Retrying…' : 'Retry this step';
     stopButton.hidden = !locked;
     form.classList.toggle('mc-wizard-busy', locked);
     // readOnly keeps fields in FormData for all successive authenticated calls.
@@ -228,13 +229,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     run();
   });
+  function retryReady() {
+    const username = form.elements.namedItem('dsm_account');
+    if (!username?.value?.trim() || !passwordInput?.value) {
+      errorBox.hidden = false;
+      errorTitle.textContent = 'DSM credentials required to retry';
+      errorDetail.textContent = 'Enter the DSM administrator username and password again above, then click Retry this step.';
+      errorHelp.textContent = 'Credentials are kept only in this browser form during installation. Previously created Minecraft containers and files are unchanged.';
+      status.textContent = 'Action required: DSM credentials must be entered to retry.';
+      (!username?.value?.trim() ? username : passwordInput)?.focus();
+      return false;
+    }
+    if (!form.reportValidity()) {
+      errorBox.hidden = false;
+      errorTitle.textContent = 'Complete the highlighted field';
+      errorDetail.textContent = 'The installer is ready to retry, but a required form field is missing or invalid.';
+      errorHelp.textContent = 'Correct the highlighted field above; the next Retry will only repeat the unfinished step.';
+      return false;
+    }
+    return true;
+  }
   retry.addEventListener('click', () => {
-    if (busy) return;
-    if (!form.reportValidity()) return;
+    if (busy || !retryReady()) return;
+    status.textContent = 'Retry requested. Rechecking the unfinished operation…';
     run();
   });
   recheck.addEventListener('click', () => {
-    if (busy || !form.reportValidity()) return;
+    if (busy || !retryReady()) return;
     pullTask = '';
     downloadChecks = 0;
     imageCheckRetries = 0;
