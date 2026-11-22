@@ -397,6 +397,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash']='The queued job was cancelled without execution.';
             redirect('manager');
         }
+        if ($action==='manager_autostart') {
+            if (mc_platform()!=='windows')
+                throw new RuntimeException('Automatic Windows service recovery is available only in the Windows module.');
+            if (!manager_online())throw new RuntimeException('The local management worker is offline.');
+            $id=console_server_id(request_string($_POST,'server_id',64));
+            $row=$config['servers'][$id]??null;
+            if (!is_array($row)||
+                ($row['deployment']??'native')!=='native'||
+                ($row['install_state']??'ready')!=='ready' ||
+                ($row['control_mode']??'')==='dsm-on-demand') {
+                throw new RuntimeException('Select a ready, locally managed Windows Minecraft server.');
+            }
+            $job=manager_enqueue('configure_autostart',
+                ['enabled'=>($_POST['auto_start']??'')==='1'],$id);
+            $_SESSION['server_id']=$id;
+            redirect('manager','&job='.$job);
+        }
         if ($action === 'manager_startup') {
             if (!manager_online()) throw new RuntimeException('Management worker is offline.');
             $serverId=console_server_id(request_string($_POST,'server_id',64));
@@ -815,9 +832,9 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
 <link rel="icon" href="assets/mcconfig.png">
-<link rel="stylesheet" href="assets/style.css?v=0.5.22">
-<script src="assets/app.js?v=0.5.22" defer></script>
-<script src="assets/bedrock-wizard.js?v=0.5.22" defer></script>
+<link rel="stylesheet" href="assets/style.css?v=0.5.23">
+<script src="assets/app.js?v=0.5.23" defer></script>
+<script src="assets/bedrock-wizard.js?v=0.5.23" defer></script>
 </head>
 <body class="<?= $authenticated ? 'app-mode' : 'auth-mode' ?>">
 <?php if (!$authenticated): ?>

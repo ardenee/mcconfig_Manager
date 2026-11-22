@@ -35,6 +35,11 @@ function worker_write(string $file,array $value): void {
 function worker_touch_heartbeat(): void {
     worker_write(manager_base().'/heartbeat.json',[
         'timestamp'=>time(),'pid'=>getmypid(),'php'=>PHP_VERSION,
+        'service_mode'=>PHP_OS_FAMILY==='Windows' &&
+            getenv('MCMANAGER_WINDOWS_SERVICE')==='1',
+        'service_name'=>PHP_OS_FAMILY==='Windows' &&
+            getenv('MCMANAGER_WINDOWS_SERVICE')==='1'?
+            substr((string)getenv('MCMANAGER_WINDOWS_SERVICE_NAME'),0,64):'',
         'message'=>'Worker active'
     ]);
 }
@@ -618,21 +623,29 @@ function worker_docker_status_for(string $id,array $meta): string {
 }
 function worker_process_running(string $id,array &$native): bool {
     if (!isset($native[$id]) || !is_resource($native[$id]['process'])) {
-        return PHP_OS_FAMILY==='Linux' && !empty(supervisor_status($id)['active']);
+        return in_array(PHP_OS_FAMILY,['Linux','Windows'],true) &&
+            !empty(supervisor_status($id)['active']);
     }
     $info=proc_get_status($native[$id]['process']);
     return is_array($info) && !empty($info['running']);
 }
 function worker_native_state(string $id,array &$native): string {
     if (worker_process_running($id,$native)) return 'running';
-    if (PHP_OS_FAMILY==='Linux' && supervisor_possibly_alive($id)) return 'running-uncertain';
+    if (in_array(PHP_OS_FAMILY,['Linux','Windows'],true) &&
+        supervisor_possibly_alive($id))return 'running-uncertain';
     return 'stopped';
 }
 function worker_native_spawn(string $id,string $path,array $meta,array &$native): void {
     if (worker_process_running($id,$native)) throw new RuntimeException('Native server is already running.');
     $port=(int)($meta['port']??0);
-    if ($port>=1024 && $port<=65535 &&
-        (($meta['edition']??'java')==='bedrock'?worker_bedrock_ping($port):worker_java_ping($port))) {
+    $nethernet=false;
+    if (PHP_OS_FAMILY==='Windows'&&($meta['edition']??'java')==='bedrock'&&
+        $port>=1024&&$port<=65535) {
+        $socket=@stream_socket_client('tcp://127.0.0.1:'.$port,$err,$msg,0.4);
+        if ($socket){$nethernet=true;fclose($socket);}
+    }
+    if ($nethernet || ($port>=1024 && $port<=65535 &&
+        (($meta['edition']??'java')==='bedrock'?worker_bedrock_ping($port):worker_java_ping($port)))) {
         throw new RuntimeException('A Minecraft server already responds on this local port; refusing a duplicate process.');
     }
     $edition=$meta['edition']??'java';
@@ -674,7 +687,7 @@ function worker_native_spawn(string $id,string $path,array $meta,array &$native)
     $native[$id]=['process'=>$proc,'stdin'=>$pipes[0],'path'=>$path];
 }
 function worker_native_start(string $id,string $path,array $meta,array &$native): void {
-    if (PHP_OS_FAMILY!=='Linux') {
+    if (!in_array(PHP_OS_FAMILY,['Linux','Windows'],true)) {
         worker_native_spawn($id,$path,$meta,$native);
         return;
     }
@@ -690,7 +703,7 @@ function worker_native_start(string $id,string $path,array $meta,array &$native)
     }
 }
 function worker_native_stop(string $id,array &$native): void {
-    if (PHP_OS_FAMILY==='Linux' && !isset($native[$id])) {
+    if (in_array(PHP_OS_FAMILY,['Linux','Windows'],true) && !isset($native[$id])) {
         supervisor_stop($id);
         return;
     }
@@ -836,6 +849,25 @@ function worker_run_operation(string $op,string $id,array $params,array &$native
     }
     if ($op==='clear_logs') return worker_clear_server_logs($id,$row,$meta,$state);
     if ($op==='configure_startup') return worker_configure_startup($id,$path,$meta,$params);
+    if ($op==='configure_autostart') {
+        if (mc_platform()!=='windows'||$mode!=='native'||
+            !empty($meta['imported'])||!empty($row['imported'])||
+            !in_array(($row['install_state']??'ready'),['ready'],true))
+            throw new RuntimeException('Windows reboot recovery is available only for locally managed native servers.');
+        $enabled=($params['enabled']??null)===true;
+        $cfg=app_config();
+        $registered=realpath((string)($cfg['servers'][$id]['path']??''));
+        if (!isset($cfg['servers'][$id])||$registered===false||
+            strcasecmp(str_replace('\\','/',$registered),
+                str_replace('\\','/',$path))!==0)
+            throw new RuntimeException('The registered Windows Minecraft server has changed.');
+        $cfg['servers'][$id]['auto_start']=$enabled;
+        save_config($cfg);
+        return ['auto_start'=>$enabled,'armed'=>supervisor_desired($id),
+            'message'=>$enabled?
+                'Reboot recovery enabled. Start the Minecraft server once to arm automatic recovery; an intentional Stop suspends it.':
+                'Reboot recovery disabled. The currently running server is not restarted or stopped.'];
+    }
     if ($op==='console_command') return worker_console_send($id,$row,$meta,(string)($params['command']??''),$native);
     if ($op==='install_server_jar') return worker_server_jar_install($id,$row,$meta,$params,$state);
     if ($op==='install_plugin' || $op==='remove_plugin') {
@@ -1100,7 +1132,7 @@ function worker_main(array $argv): int {
     do {
         try {
             worker_touch_heartbeat();
-            if (time()-$lastDockerProbe>=30) {
+            if (mc_platform()==='dsm' && time()-$lastDockerProbe>=30) {
                 worker_publish_docker_access();
                 $lastDockerProbe=time();
             }
@@ -1124,7 +1156,8 @@ function worker_main(array $argv): int {
         if ($mode==='once') break;
         if (is_file(manager_base().'/stop-request')) {
             @unlink(manager_base().'/stop-request');
-            // Graceful stop: avoid orphaning processes and world corruption.
+            // Service stop requests save worlds through independent supervisors.
+            supervisor_windows_shutdown();
             foreach(array_keys($native) as $server) {
                 try { if (worker_process_running($server,$native)) worker_native_stop($server,$native); }
                 catch (Throwable $e) { worker_log($server,'Shutdown warning: '.$e->getMessage()); }

@@ -33,7 +33,17 @@ function supervisor_status(string $id): array {
     return $state;
 }
 function supervisor_process_exists(int $pid): bool {
-    if (PHP_OS_FAMILY!=='Linux' || $pid<2) return false;
+    if ($pid<2)return false;
+    if (PHP_OS_FAMILY==='Windows') {
+        $ps=worker_bin('powershell');
+        if (!$ps)return true; // Uncertainty must block duplicate starts.
+        try {
+            [$code,$out]=worker_exec([$ps,'-NoProfile','-NonInteractive',
+                '-Command','if(Get-Process -Id '.$pid.' -ErrorAction SilentlyContinue){Write-Output PRESENT}'],100);
+            return $code!==0||trim($out)==='PRESENT';
+        } catch(Throwable) {return true;}
+    }
+    if (PHP_OS_FAMILY!=='Linux')return false;
     if (function_exists('posix_kill')) return @posix_kill($pid,0);
     return is_dir('/proc/'.$pid);
 }
@@ -112,8 +122,36 @@ function supervisor_run(string $id): int {
     }
 }
 function supervisor_launch(string $id): void {
-    if (PHP_OS_FAMILY!=='Linux') throw new RuntimeException('Persistent native supervision requires Linux.');
-    if (supervisor_possibly_alive($id)) throw new RuntimeException('A native Minecraft process may already be running.');
+    if (!in_array(PHP_OS_FAMILY,['Linux','Windows'],true))
+        throw new RuntimeException('Native supervisor requires Windows or Linux.');
+    if (supervisor_possibly_alive($id))
+        throw new RuntimeException('A native supervisor or Minecraft process may already be running.');
+    if (PHP_OS_FAMILY==='Windows') {
+        $ps=worker_bin('powershell');
+        if (!$ps) throw new RuntimeException('Windows PowerShell is required to start the independent Minecraft supervisor.');
+        $file=__DIR__.'/native-supervisor.php';
+        $log=supervisor_folder($id).'/supervisor.log';
+        $errors=supervisor_folder($id).'/supervisor-errors.log';
+        $quoted=static fn(string $v):string=>"'".str_replace("'","''",str_replace('/','\\',$v))."'";
+        $args='"'.str_replace('"',chr(96).'"',str_replace('/','\\',$file)).'" run '.$id;
+        $command='$ProgressPreference="SilentlyContinue"; $ErrorActionPreference="Stop"; '.
+            '$p=Start-Process -FilePath '.$quoted(PHP_BINARY).
+            ' -ArgumentList '.$quoted($args).
+            ' -WorkingDirectory '.$quoted(dirname($file)).
+            ' -WindowStyle Hidden -RedirectStandardOutput '.$quoted($log).
+            ' -RedirectStandardError '.$quoted($errors).
+            ' -PassThru; if(!$p){exit 7}; Write-Output $p.Id';
+        $encoded=base64_encode(iconv('UTF-8','UTF-16LE',$command));
+        [$code,$out]=worker_exec([$ps,'-NoProfile','-NonInteractive',
+            '-EncodedCommand',$encoded],1024);
+        if ($code!==0||!preg_match('/(?:^|\r?\n)\d+(?:\r?\n|$)/',trim($out)))
+            throw new RuntimeException('Windows native supervisor launch failed: '.substr($out,0,350));
+        for($i=0;$i<30;$i++) {
+            usleep(200000);
+            if (!empty(supervisor_status($id)['active']))return;
+        }
+        throw new RuntimeException('Windows Minecraft supervisor did not become ready. Check its private log.');
+    }
     $setsid=worker_bin('setsid');
     if (!$setsid) throw new RuntimeException('setsid -f is unavailable; cannot detach native supervisor safely.');
     $script=__DIR__.'/native-supervisor.php';
@@ -140,7 +178,7 @@ function supervisor_stop(string $id): void {
     throw new RuntimeException('Minecraft has not stopped gracefully; no forced termination was performed.');
 }
 function supervisor_recover_desired(): void {
-    if (PHP_OS_FAMILY!=='Linux') return;
+    if (!in_array(PHP_OS_FAMILY,['Linux','Windows'],true))return;
     $servers=app_config()['servers']??[];
     if (!is_array($servers)) return;
     foreach($servers as $id=>$row) {
@@ -150,13 +188,43 @@ function supervisor_recover_desired(): void {
             [$path,$meta]=worker_managed($id,$row);
             if (($meta['deployment']??'native')!=='native' || !supervisor_desired($id) ||
                 supervisor_possibly_alive($id)) continue;
+            if (PHP_OS_FAMILY==='Windows' && empty($row['auto_start']))continue;
             $attempt=supervisor_folder($id).'/last-start-attempt';
             if (is_file($attempt) && time()-(int)filemtime($attempt)<60) continue;
             touch($attempt);
             supervisor_launch($id);
-            worker_log($id,'Recovered desired native Minecraft server after worker/NAS restart');
+            worker_log($id,'Recovered opted-in native Minecraft server after local worker or host restart');
         } catch(Throwable $e) {
             worker_log((string)$id,'Recovery postponed: '.$e->getMessage());
         }
     }
+}
+
+/** Gracefully stop Windows supervisors during a service/OS shutdown.
+ * Desired intent stays intact for opted-in servers at next service startup.
+ */
+function supervisor_windows_shutdown(): void {
+    if (PHP_OS_FAMILY!=='Windows')return;
+    $rows=app_config()['servers']??[];
+    if (!is_array($rows))return;
+    $waiting=[];
+    foreach($rows as $id=>$row) {
+        if (!is_string($id)||!preg_match('/^[a-f0-9]{12}$/D',$id)||
+            !is_array($row)||($row['deployment']??'native')!=='native')continue;
+        try {
+            if (supervisor_possibly_alive($id)) {
+                supervisor_enqueue($id,'stop');
+                $waiting[]=$id;
+            }
+        } catch(Throwable $e) {worker_log((string)$id,'Shutdown inspection: '.$e->getMessage());}
+    }
+    $deadline=microtime(true)+65;
+    while($waiting && microtime(true)<$deadline) {
+        foreach($waiting as $index=>$id) {
+            if (!supervisor_possibly_alive($id))unset($waiting[$index]);
+        }
+        if ($waiting)usleep(250000);
+    }
+    foreach($waiting as $id)
+        worker_log($id,'Shutdown timed out; no Minecraft process was forcibly terminated.');
 }

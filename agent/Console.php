@@ -46,7 +46,7 @@ function worker_console_send(string $id, array $server, array $meta, string $inp
     }
     // Standalone Linux supervisors own the Minecraft stdin pipe. The main worker
     // submits a signed message, keeping both processes independent.
-    if (PHP_OS_FAMILY==='Linux' && !isset($native[$id])) {
+    if (in_array(PHP_OS_FAMILY,['Linux','Windows'],true) && !isset($native[$id])) {
         if (!supervisor_status($id)['active']) {
             throw new RuntimeException('Native supervisor is not available to receive console commands.');
         }

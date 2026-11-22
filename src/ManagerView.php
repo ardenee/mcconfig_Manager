@@ -19,6 +19,10 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
   </div>
   <?php if (!$workerOnline): ?>
     <div class="alert warning">The management service is offline; status information and server controls may not be available. Start the local mcmanager worker to enable installation and server control.</div>
+  <?php elseif ($platform==='windows'): ?>
+    <p class="hint"><?= !empty($workerInfo['service_mode'])?
+      'Windows Service active: '.h($workerInfo['service_name']??'mcmanager-worker'):
+      'Local development worker is running; install the Windows Service for automatic startup and crash recovery.' ?></p>
   <?php elseif ($platform==='dsm' && !$dockerAvailable): ?>
     <p class="hint">The worker has no permanent Docker access. Use <strong>Install a Bedrock Edition server — one-time DSM authorization</strong> or the existing-container approval panel below. Image download, creation and start each require fresh DSM administrator authorization; nothing is stored.</p>
   <?php endif; ?>
@@ -217,8 +221,23 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
         <summary>Details, updates and maintenance</summary>
         <p class="hint">Server storage: <code><?= h($row['path']??'') ?></code></p>
         <?php if ($detected['source']!==''): ?><p class="hint">Minecraft version source: <?= h($detected['source']) ?></p><?php endif; ?>
-        <?php if (($row['deployment']??'native')==='native'): ?>
-          <p class="hint">Automatic restart recovery: <?= manager_native_resume_requested((string)$id)?'Enabled':'Not requested' ?></p>
+        <?php if (($row['deployment']??'native')==='native' && $platform==='windows' &&
+            ($row['install_state']??'ready')==='ready'): ?>
+          <form method="post" class="mc-windows-autostart">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="manager_autostart">
+            <input type="hidden" name="server_id" value="<?= h($id) ?>">
+            <label class="check"><input type="checkbox" name="auto_start" value="1"
+              <?= !empty($row['auto_start'])?'checked':'' ?>>
+              Restart this server automatically after Windows or the mcmanager service restarts</label>
+            <button type="submit" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Save restart preference</button>
+          </form>
+          <p class="hint">Off by default. Start the server once after enabling to arm recovery.
+          An intentional Stop disarms it until you select Start again. The worker does not restart unknown or externally owned processes.</p>
+          <p class="hint">Recovery: <?= !empty($row['auto_start'])?
+            (manager_native_resume_requested((string)$id)?'Enabled and armed':'Enabled, not armed'):'Disabled' ?></p>
+        <?php elseif (($row['deployment']??'native')==='native' && $platform==='linux'): ?>
+          <p class="hint">Independent Linux supervisor recovery: <?= manager_native_resume_requested((string)$id)?'Requested':'Not requested' ?></p>
         <?php endif; ?>
       <?php if (!empty($state['players_online']) || isset($state['players_max'])): ?>
         <p class="muted">Players <?= h($state['players_online']??0) ?> / <?= h($state['players_max']??0) ?><?= !empty($state['server_version'])?' · '.h($state['server_version']):'' ?></p>

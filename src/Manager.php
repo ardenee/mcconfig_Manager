@@ -63,7 +63,7 @@ function manager_job_id(string $value): string {
 }
 function manager_enqueue(string $operation, array $params = [], string $serverId = ''): string {
     $allowed = ['diagnostics', 'discover', 'install', 'adopt', 'status', 'check_updates', 'start',
-        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar', 'configure_startup','switch_to_paper', 'clear_logs'];
+        'stop', 'restart', 'backup', 'verify_backup', 'restore_backup', 'update', 'uninstall', 'install_java', 'console_command', 'install_plugin', 'remove_plugin', 'install_server_jar', 'configure_startup','configure_autostart','switch_to_paper', 'clear_logs'];
     if (!in_array($operation, $allowed, true)) throw new InvalidArgumentException('Unknown manager operation.');
     if ($serverId !== '' && !preg_match('/^[a-f0-9]{12}$/D', $serverId)) throw new InvalidArgumentException('Invalid server ID.');
     $id = bin2hex(random_bytes(12));

@@ -130,17 +130,28 @@ def validate_dsm() -> None:
 
 
 def zip_web(files: dict[str, bytes], out: Path) -> Path:
+    # The generic Windows/Linux package contains the Windows service source
+    # and installer. Synology's SPK retains only the shared PHP application.
+    windows = {}
+    for name in ("packaging/windows/McManagerService.cs",
+                 "packaging/windows/install-service.ps1",
+                 "packaging/windows/upgrade-service.ps1"):
+        path_source = ROOT / name
+        if not path_source.is_file() or path_source.is_symlink():
+            raise RuntimeError("Missing Windows service packaging source: " + name)
+        windows[name] = path_source.read_bytes()
+    content = {**files, **windows}
     path = out / f"mcmanager-web-{package_version()}.zip"
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for name, body in sorted(files.items()):
+        for name, body in sorted(content.items()):
             entry = zipfile.ZipInfo(name, (2020, 1, 1, 0, 0, 0))
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.external_attr = 0o644 << 16
             archive.writestr(entry, body)
     with zipfile.ZipFile(path) as archive:
-        if set(archive.namelist()) != set(files):
+        if set(archive.namelist()) != set(content):
             raise RuntimeError("Generic ZIP does not match the source tree.")
-        for name, body in files.items():
+        for name, body in content.items():
             if archive.read(name) != body:
                 raise RuntimeError(f"Generic ZIP content mismatch: {name}")
     return path
