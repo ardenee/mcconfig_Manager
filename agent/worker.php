@@ -399,78 +399,92 @@ PS;
     }
     return $info;
 }
+/** Local hardware and Java diagnostics must never require Docker/DSM
+ * administrator credentials. They also must not create or modify the
+ * Minecraft storage directory just to obtain a diagnostic result.
+ */
 function worker_diagnostics(): array {
     $platform=mc_platform();
     $hardware=worker_local_hardware();
-    $javas=[];$seen=[];
-    $addJava=static function(string $path,bool $managed=false)use(&$javas,&$seen):void {
-        $real=realpath($path);
+    $storage=manager_instances_root();
+    $resolved=@realpath($storage);
+    $storageOk=is_string($resolved)&&is_dir($resolved)&&!is_link($storage)&&
+        is_readable($resolved)&&is_writable($resolved);
+    $storageError='';
+    if (!$storageOk) {
+        $storageError='The local Minecraft instances directory is unavailable to the restricted management worker. '.
+            'Check the package storage directory and its service-account permissions. '.
+            'DSM administrator login does not grant filesystem rights to PHP.';
+    }
+    $storagePath=$resolved?:$storage;
+    $free=@disk_free_space($storagePath);
+    if ($free===false)$free=null;
+
+    $javas=[];$seen=[];$javaErrors=[];
+    $addJava=static function(string $path,bool $managed=false)use(&$javas,&$seen,&$javaErrors):void {
+        $real=@realpath($path);
         $key=strtolower(str_replace('\\','/',$real?:$path));
         if (isset($seen[$key]))return;
         $seen[$key]=true;
-        $javas[]=worker_java_version($path)+['managed'=>$managed];
+        try {
+            $java=worker_java_version($path);
+            $javas[]=$java+['managed'=>$managed];
+            if (($java['code']??1)!==0 || ($java['major']??0)===0) {
+                $raw=(string)($java['raw']??'');
+                $cause=(stripos($raw,'permission denied')!==false ||
+                    stripos($raw,'operation not permitted')!==false)
+                    ?'Permission denied when the local worker tried to execute this Java runtime.'
+                    :'Java version could not be determined by the local worker.';
+                $javaErrors[]=['path'=>$path,'message'=>$cause];
+            }
+        } catch(Throwable $e) {
+            $javaErrors[]=['path'=>$path,
+                'message'=>'The local worker could not execute this Java runtime: '.
+                    substr($e->getMessage(),0,180)];
+        }
     };
+    // Inspect managed runtimes without the worker_root() write/create guard:
+    // a read-only diagnostics job must not fail because storage is unavailable.
     foreach([17,21,25] as $major) {
-        $managed=worker_managed_java($major);
-        if ($managed)$addJava($managed,true);
+        $managed=$storagePath.'/runtimes/temurin-'.$major.'/bin/java'.
+            (PHP_OS_FAMILY==='Windows'?'.exe':'');
+        if (is_file($managed)) {
+            if (is_executable($managed))$addJava($managed,true);
+            else $javaErrors[]=['path'=>$managed,
+                'message'=>'The managed Java runtime is not executable by the local worker.'];
+        }
     }
     $binary=worker_bin('java');
     if ($binary)$addJava($binary);
     if ($platform==='dsm') {
         foreach(['/var/packages/Java8/target/j2sdk-image/bin/java',
             '/usr/local/java/bin/java','/opt/jdk-25/bin/java'] as $j) {
-            if (is_file($j)&&is_executable($j))$addJava($j);
+            if (is_file($j)) {
+                if (is_executable($j))$addJava($j);
+                else $javaErrors[]=['path'=>$j,
+                    'message'=>'The local worker cannot execute this DSM Java runtime.'];
+            }
         }
     }
     $persistent=PHP_OS_FAMILY==='Linux'&&worker_bin('setsid')!==null;
-    $health=[
+    return [
         'php'=>PHP_VERSION,'platform'=>$platform,
         'os'=>PHP_OS_FAMILY,'os_name'=>$hardware['os_name'],
         'architecture'=>php_uname('m'),'cpu_model'=>$hardware['cpu_model'],
         'ram_total'=>$hardware['ram_total'],'ram_available'=>$hardware['ram_available'],
-        'free_storage'=>disk_free_space(worker_root()),
-        'java'=>$javas,'instances_root'=>worker_root(),
+        'free_storage'=>$free,'storage_accessible'=>$storageOk,
+        'storage_error'=>$storageError,
+        'java'=>$javas,'java_errors'=>array_slice($javaErrors,0,12),
+        'instances_root'=>$storagePath,
         'native_supported'=>true,'persistent_native_supported'=>$persistent,
         'native_supervision'=>$persistent?'detached':'worker',
-    ];
-    if ($platform!=='dsm')return $health;
-    // DSM only: never probe Docker on ordinary Windows or Linux installations.
-    $docker=worker_bin('docker');
-    $socket='/var/run/docker.sock';
-    $socketStat=@stat($socket);
-    $workerUid=function_exists('posix_geteuid')?posix_geteuid():null;
-    $workerUser=($workerUid!==null && function_exists('posix_getpwuid'))
-        ?(posix_getpwuid($workerUid)['name']??(string)$workerUid):'unknown';
-    $owner=is_array($socketStat)?(int)$socketStat['uid']:-1;
-    $group=is_array($socketStat)?(int)$socketStat['gid']:-1;
-    $ownerName=$owner>=0&&function_exists('posix_getpwuid')?(posix_getpwuid($owner)['name']??(string)$owner):'?';
-    $groupName=$group>=0&&function_exists('posix_getgrgid')?(posix_getgrgid($group)['name']??(string)$group):'?';
-    $sockDetails=is_array($socketStat)?
-        ($socket.' '.$ownerName.':'.$groupName.' '.sprintf('%04o',(int)$socketStat['mode']&0777)):
-        'Socket missing: '.$socket;
-    $dockerStatus=$docker?'Docker CLI detected; checking daemon':'Docker CLI unavailable';
-    $dockerError='';
-    if ($docker) {
-        [$code,$out]=worker_exec([$docker,'version','--format','{{.Server.Version}}'],1000);
-        if ($code===0)$dockerStatus='available: '.$out;
-        elseif (stripos($out,'permission denied')!==false) {
-            $dockerStatus='Permission denied to Container Manager Docker socket';
-            $dockerError=$out;
-        } elseif (!is_array($socketStat)) {
-            $dockerStatus='Docker daemon socket unavailable';
-            $dockerError=$out;
-        } else {
-            $dockerStatus='Docker CLI cannot connect to its daemon';
-            $dockerError=$out;
-        }
-    }
-    return $health+[
-        'docker'=>$dockerStatus,'docker_cli'=>$docker??'not found',
-        'docker_socket'=>$sockDetails,'docker_worker_user'=>$workerUser,
-        'docker_error'=>substr($dockerError,0,500),
+        // DSM Docker is intentionally not opened or probed here.
+        // Use the existing one-time authenticated SYNO.Docker.Container.list
+        // operation in the web request for separate read-only checks.
+    ]+($platform==='dsm'?[
         'container_manager_installed'=>is_dir('/var/packages/ContainerManager'),
-        'container_supported'=>$docker && str_starts_with($dockerStatus,'available'),
-    ];
+        'dsm_container_check'=>'one-time-authorization-required'
+    ]:[]);
 }
 
 function worker_backup(string $id,string $path,string $reason='manual'): string {

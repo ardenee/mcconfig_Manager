@@ -32,6 +32,38 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <form method="post" class="inline-form"><?php hidden_csrf(); ?>
       <button name="action" value="manager_diagnostics" class="subtle" <?= !$workerOnline?'disabled':'' ?>>Check hardware and Java</button>
     </form>
+    <?php if ($platform==='dsm'): ?>
+      <p class="hint">Hardware and Java are checked by the local worker without DSM administrator login. Container Manager permissions are checked separately, so restricted Docker socket access does not cause a hardware check to fail.</p>
+      <details class="mc-feature-group" id="mc-dsm-diagnostic-approval"
+        <?= is_array($dsmReport)&&($dsmReport['operation']??'')==='test'?'open':'' ?>>
+        <summary>Check DSM Container Manager (one-time administrator authorization)</summary>
+        <?php if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS']==='off'): ?>
+          <p class="hint">Open mcmanager over HTTPS before entering DSM administrator credentials.</p>
+        <?php elseif (!extension_loaded('curl')): ?>
+          <p class="hint">Enable the PHP curl extension in the mcconfig Web Station profile to use the DSM read-only API.</p>
+        <?php else: ?>
+          <p class="hint">This separate read-only check lists DSM containers using an authenticated Synology API request. Enter your DSM details once; the password, one-time code and DSM session are discarded after the check. No worker permissions or Docker socket access are changed.</p>
+          <form method="post" action="?tab=manager#mc-dsm-diagnostic-approval" autocomplete="off">
+            <?php hidden_csrf(); ?>
+            <input type="hidden" name="action" value="dsm_approve_once">
+            <input type="hidden" name="dsm_operation" value="test">
+            <div class="form-row">
+              <label>DSM administrator username <input name="dsm_account" maxlength="64" autocomplete="off" required></label>
+              <label>DSM administrator password <input name="dsm_password" type="password" maxlength="1024" autocomplete="new-password" required></label>
+              <label>One-time code, if enabled <input name="dsm_otp" inputmode="numeric" maxlength="8" autocomplete="off"></label>
+            </div>
+            <button type="submit" class="subtle">Authorize read-only DSM check</button>
+          </form>
+        <?php endif; ?>
+        <?php if (is_array($dsmReport) && ($dsmReport['operation']??'')==='test'): ?>
+          <p class="hint"><?= h($dsmReport['message']??'DSM Container Manager check completed') ?></p>
+          <p><strong><?= (int)($dsmReport['count']??0) ?> container(s) visible through DSM</strong></p>
+          <?php foreach(($dsmReport['containers']??[]) as $item): ?>
+            <div class="status-line"><span><?= h($item['name']??'') ?></span><strong><?= h($item['status']??'') ?></strong></div>
+          <?php endforeach; ?>
+        <?php endif; ?>
+      </details>
+    <?php endif; ?>
     <details class="mc-feature-group">
       <summary>Third-party local server discovery (optional)</summary>
       <p class="hint">Find Minecraft installations on this computer only. Leave the path blank to scan default managed storage, or specify an existing local folder to scan (including its immediate subfolders). This does not modify the files. Imported servers remain owned by their original installers.</p>
@@ -421,22 +453,12 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
       <div class="status-line"><span>Managed storage</span><code><?= h($s['instances_root']??'') ?></code></div>
     </div>
     <?php if ($diagnosticsDsm): ?>
-      <h3>Synology DSM Container Manager</h3>
-      <div class="two-column">
-        <div class="status-line"><span>Container Manager</span><strong><?= !empty($s['container_manager_installed'])?'Installed':'Not detected' ?></strong></div>
-        <div class="status-line"><span>Docker daemon</span><strong><?= h($s['docker']??'Not checked') ?></strong></div>
-        <?php if (isset($s['docker_cli'])): ?>
-          <div class="status-line"><span>Docker CLI executable</span><code><?= h($s['docker_cli']) ?></code></div>
-          <div class="status-line"><span>Docker socket</span><code><?= h($s['docker_socket']??'Unknown') ?></code></div>
-          <div class="status-line"><span>Worker account</span><strong><?= h($s['docker_worker_user']??'Unknown') ?></strong></div>
-        <?php endif; ?>
-      </div>
-      <?php if (!empty($s['docker_error'])): ?>
-        <p class="hint">Docker error: <?= h($s['docker_error']) ?></p>
-      <?php endif; ?>
-      <?php if (empty($s['container_supported'])): ?>
-        <p class="hint">On DSM, Container Manager can be running while the restricted mcmanager worker lacks Docker socket access. Check permissions only if Docker-worker integration is required. Temporary DSM authorization remains a separate option; never make Docker's socket world-writable.</p>
-      <?php endif; ?>
+      <h3>Synology DSM Container Manager — separate check</h3>
+      <div class="status-line"><span>Container Manager package</span><strong><?= !empty($s['container_manager_installed'])?'Installed':'Not detected' ?></strong></div>
+      <p class="hint">Container Manager runtime access was not tested during Check hardware and Java. To check container visibility, use <strong>Check DSM Container Manager</strong> in Diagnostics and server discovery above. That separate, read-only check requests DSM credentials once and does not grant Docker socket permissions to the worker.</p>
+    <?php endif; ?>
+    <?php if (!empty($s['storage_error'])): ?>
+      <p class="hint"><strong>Managed storage access:</strong> <?= h($s['storage_error']) ?></p>
     <?php endif; ?>
     <h3>Local Java runtimes</h3>
     <p class="hint">Java Edition needs a compatible Java runtime. Bedrock Dedicated Server does not use Java. Managed Java installations are kept separate from system Java.</p>
@@ -451,6 +473,9 @@ $selectedJob=is_string($requestedJob) && preg_match('/^[a-f0-9]{24}$/D',$request
     <?php if (empty($s['java'])): ?>
       <p class="muted">No Java runtime found. For Java Edition, install a compatible runtime using the Java management controls.</p>
     <?php endif; ?>
+    <?php foreach (($s['java_errors']??[]) as $javaError): ?>
+      <p class="hint">Java inspection: <code><?= h($javaError['path']??'') ?></code> — <?= h($javaError['message']??'Execution failed') ?> Check executable permissions for the restricted package worker account. DSM login cannot change those permissions.</p>
+    <?php endforeach; ?>
   <?php endif; ?>
   <?php if (!empty($selectedJob['result']['found'])): ?>
     <h3>Discovered local servers</h3>
