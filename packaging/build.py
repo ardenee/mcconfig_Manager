@@ -10,6 +10,7 @@ import json
 import re
 import tarfile
 import zipfile
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,9 +85,101 @@ def add_directory(tar: tarfile.TarFile, name: str) -> None:
 
 
 def png_dimension(data: bytes) -> tuple[int, int]:
-    if data[:8] != b"\x89PNG\r\n\x1a\n":
+    if data[:8] != bytes.fromhex("89504e470d0a1a0a"):
         raise RuntimeError("Invalid PNG artwork")
     return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def png_rgba_rows(data: bytes) -> tuple[int, int, list[bytes]]:
+    """Read only our source icon's 8-bit RGBA PNG using the Python stdlib.
+
+    This guards against low-resolution artwork being scaled up to 256px.
+    """
+    if data[:8] != bytes.fromhex("89504e470d0a1a0a"):
+        raise RuntimeError("Invalid PNG signature in package icon.")
+    offset = 8
+    idat: list[bytes] = []
+    dimensions: tuple[int, int] | None = None
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise RuntimeError("Truncated package icon PNG.")
+        size = int.from_bytes(data[offset:offset + 4], "big")
+        kind = data[offset + 4:offset + 8]
+        payload = data[offset + 8:offset + 8 + size]
+        if len(payload) != size or offset + 12 + size > len(data):
+            raise RuntimeError("Corrupt package icon PNG.")
+        if kind == b"IHDR":
+            w, h = int.from_bytes(payload[:4], "big"), int.from_bytes(payload[4:8], "big")
+            if len(payload) != 13 or payload[8:] != bytes([8, 6, 0, 0, 0]):
+                raise RuntimeError("Package icons must be 8-bit noninterlaced RGBA PNG.")
+            dimensions = w, h
+        elif kind == b"IDAT":
+            idat.append(payload)
+        elif kind == b"IEND":
+            break
+        offset += 12 + size
+    if dimensions is None or not idat:
+        raise RuntimeError("Package icon PNG missing image data.")
+    w, h = dimensions
+    if w > 256 or h > 256 or w == 0 or h == 0:
+        raise RuntimeError("Unexpected package icon dimensions.")
+    try:
+        raw = zlib.decompress(b"".join(idat))
+    except zlib.error as exc:
+        raise RuntimeError("Package icon PNG decompression failed.") from exc
+    stride = w * 4
+    if len(raw) != (stride + 1) * h:
+        raise RuntimeError("Unexpected package icon pixel data length.")
+    rows: list[bytes] = []
+    previous = bytearray(stride)
+    for y in range(h):
+        start = y * (stride + 1)
+        filter_type = raw[start]
+        scanline = bytearray(raw[start + 1:start + 1 + stride])
+        if filter_type > 4:
+            raise RuntimeError("Unsupported package icon PNG scanline filter.")
+        for i in range(stride):
+            left = scanline[i - 4] if i >= 4 else 0
+            above = previous[i]
+            upper_left = previous[i - 4] if i >= 4 else 0
+            if filter_type == 1:
+                predictor = left
+            elif filter_type == 2:
+                predictor = above
+            elif filter_type == 3:
+                predictor = (left + above) // 2
+            elif filter_type == 4:
+                pp = left + above - upper_left
+                a, b, c = abs(pp - left), abs(pp - above), abs(pp - upper_left)
+                predictor = left if a <= b and a <= c else above if b <= c else upper_left
+            else:
+                predictor = 0
+            scanline[i] = (scanline[i] + predictor) & 255
+        rows.append(bytes(scanline))
+        previous = scanline
+    return w, h, rows
+
+
+def validate_native_icon_detail() -> None:
+    """DSM 256 icon must preserve genuine original pixels, never enlarge them."""
+    source = (ROOT / "public/assets/mcconfig.png").read_bytes()
+    width, height, original = png_rgba_rows(source)
+    if (width, height) != (120, 120):
+        raise RuntimeError("Original mcconfig artwork must remain at its native 120x120 size.")
+    w, h, larger = png_rgba_rows((PACK / "PACKAGE_ICON_256.PNG").read_bytes())
+    if (w, h) != (256, 256):
+        raise RuntimeError("DSM large icon must use a 256x256 PNG canvas.")
+    top = (h - height) // 2
+    left = (w - width) // 2
+    for y, line in enumerate(larger):
+        if top <= y < top + height:
+            if line[left * 4:(left + width) * 4] != original[y - top]:
+                raise RuntimeError("DSM large icon must contain the unscaled original artwork.")
+            sides = line[:left * 4] + line[(left + width) * 4:]
+        else:
+            sides = line
+        if any(sides[i] != 0 for i in range(3, len(sides), 4)):
+            raise RuntimeError("DSM large icon must have transparent padding around the original.")
 
 
 def validate_dsm() -> None:
@@ -122,6 +215,7 @@ def validate_dsm() -> None:
     for file, size in (("PACKAGE_ICON.PNG", 64), ("PACKAGE_ICON_256.PNG", 256)):
         if png_dimension((PACK / file).read_bytes()) != (size, size):
             raise RuntimeError(f"{file} must be {size}x{size}.")
+    validate_native_icon_detail()
     for script in SCRIPTS:
         # Git on Windows may check out POSIX shell scripts with CRLF; package them as LF.
         data = (PACK / "scripts" / script).read_bytes().replace(b"\r\n", b"\n")

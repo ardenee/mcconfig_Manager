@@ -65,6 +65,8 @@ On Windows, the service installer manages the worker, not Apache/IIS. For a cust
 
 The package retains the internal name `mcconfig` and application address `/mcconfig/` for existing DSM installations.
 
+**DSM package icon:** The original mcconfig 0.2 artwork is only 120×120 pixels. The SPK uses a high-quality reduction for its 64×64 icon and displays the unscaled original centered in a 256×256 transparent canvas, rather than enlarging and pixelating the old artwork. No higher-resolution original was present in the historical package.
+
 ## Limitations
 
 - No remote management of Minecraft servers on other devices.
