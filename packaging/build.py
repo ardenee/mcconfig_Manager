@@ -161,25 +161,20 @@ def png_rgba_rows(data: bytes) -> tuple[int, int, list[bytes]]:
 
 
 def validate_native_icon_detail() -> None:
-    """DSM 256 icon must preserve genuine original pixels, never enlarge them."""
+    """Require the same high-resolution photo icon in the app and DSM package."""
     source = (ROOT / "public/assets/mcconfig.png").read_bytes()
-    width, height, original = png_rgba_rows(source)
-    if (width, height) != (120, 120):
-        raise RuntimeError("Original mcconfig artwork must remain at its native 120x120 size.")
-    w, h, larger = png_rgba_rows((PACK / "PACKAGE_ICON_256.PNG").read_bytes())
-    if (w, h) != (256, 256):
-        raise RuntimeError("DSM large icon must use a 256x256 PNG canvas.")
-    top = (h - height) // 2
-    left = (w - width) // 2
-    for y, line in enumerate(larger):
-        if top <= y < top + height:
-            if line[left * 4:(left + width) * 4] != original[y - top]:
-                raise RuntimeError("DSM large icon must contain the unscaled original artwork.")
-            sides = line[:left * 4] + line[(left + width) * 4:]
-        else:
-            sides = line
-        if any(sides[i] != 0 for i in range(3, len(sides), 4)):
-            raise RuntimeError("DSM large icon must have transparent padding around the original.")
+    width, height, rows = png_rgba_rows(source)
+    if (width, height) != (256, 256):
+        raise RuntimeError("mcconfig homepage artwork must be a 256x256 RGBA PNG.")
+    package_large = (PACK / "PACKAGE_ICON_256.PNG").read_bytes()
+    if package_large != source:
+        raise RuntimeError("DSM 256x256 icon must match the homepage artwork.")
+    sw, sh, small_rows = png_rgba_rows((PACK / "PACKAGE_ICON.PNG").read_bytes())
+    if (sw, sh) != (64, 64) or not any(any(row[i] for i in range(3, len(row), 4)) for row in small_rows):
+        raise RuntimeError("DSM 64x64 icon is missing or transparent.")
+    master = PACK.parent / "mcconfig-original-photo-crop.png"
+    if not master.is_file() or png_dimension(master.read_bytes()) != (383, 383):
+        raise RuntimeError("Missing cropped original photograph for the icon build.")
 
 
 def validate_dsm() -> None:

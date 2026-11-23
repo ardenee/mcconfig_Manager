@@ -65,7 +65,7 @@ On Windows, the service installer manages the worker, not Apache/IIS. For a cust
 
 The package retains the internal name `mcconfig` and application address `/mcconfig/` for existing DSM installations.
 
-**DSM package icon:** The original mcconfig 0.2 artwork is only 120×120 pixels. The SPK uses a high-quality reduction for its 64×64 icon and displays the unscaled original centered in a 256×256 transparent canvas, rather than enlarging and pixelating the old artwork. No higher-resolution original was present in the historical package.
+**DSM package and homepage artwork:** The supplied photograph is preserved as a 383×383 square crop (no jumper logo). Run `python packaging/make_icons.py` to produce the application's 256×256 PNG and the matching DSM Package Center 64×64 and 256×256 PNGs. All three are resized directly from the original crop; no AI generation or enlargement of the previous tiny icon is used.
 
 ## Limitations
 

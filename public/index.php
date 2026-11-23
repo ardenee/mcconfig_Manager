@@ -836,7 +836,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
 <title><?= h($tabs[$tab]) ?> · mcmanager</title>
-<link rel="icon" href="assets/mcconfig.png">
+<link rel="icon" href="assets/mcconfig.png?v=0.5.28">
 <link rel="stylesheet" href="assets/style.css?v=0.5.27">
 <script src="assets/app.js?v=0.5.27-r2" defer></script>
 <script src="assets/bedrock-wizard.js?v=0.5.27-r2" defer></script>
@@ -845,7 +845,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <?php if (!$authenticated): ?>
 <main class="login-shell">
   <div class="login-panel">
-    <img src="assets/mcconfig.png" width="76" height="76" alt="mcconfig icon">
+    <img src="assets/mcconfig.png?v=0.5.28" width="76" height="76" alt="mcconfig icon">
     <h1>mcmanager</h1><p class="muted">Minecraft server management</p>
     <?php if ($error): ?><div class="alert danger"><?= h($error) ?></div><?php endif; ?>
     <?php if (!$installed): ?>
@@ -867,7 +867,7 @@ function stat_card(string $label, string $value, string $info = ''): void {
 <?php else: ?>
 <div class="layout">
 <aside class="sidebar">
-  <a href="index.php" class="brand"><img src="assets/mcconfig.png" width="42" height="42" alt=""><span>mcmanager<small>Minecraft servers</small></span></a>
+  <a href="index.php" class="brand"><img src="assets/mcconfig.png?v=0.5.28" width="42" height="42" alt=""><span>mcmanager<small>Minecraft servers</small></span></a>
   <div class="sidebar-label">WORKSPACE</div>
   <nav aria-label="Main navigation">
   <?php foreach ($tabs as $key=>$title): ?>
